@@ -40,6 +40,10 @@ GRUB_DROPIN = Path('/etc/default/grub.d/99-ecat-groundstation.cfg')
 GRUB_CONFIG = Path('/boot/grub/grub.cfg')
 
 
+class JobCancelled(RuntimeError):
+    """Must not be InterruptedError: selectors treats it as a retriable syscall."""
+
+
 def result(data):
     print(RESULT_PREFIX + json.dumps(data, ensure_ascii=False), flush=True)
 
@@ -495,12 +499,31 @@ def flash_mcu(args):
     return {'message': message, 'image': str(image), 'sha256': sha256_file(image), 'serial': serial}
 
 
+TOOL_PACKAGES = {
+    # binutils and newlib headers are hard dependencies of these packages.
+    # No C++ library, Ninja, host compiler suite, or USB CLI is required.
+    'imu': ('cmake', 'make', 'gcc-arm-none-eabi', 'libnewlib-arm-none-eabi', 'python3-venv'),
+    'flash': ('openocd',),
+}
+
+
 def install_tools(args):
     require_root()
-    run(['apt-get', 'update'], timeout=1800)
-    run(['apt-get', 'install', '-y', 'git', 'cmake', 'ninja-build', 'gcc-arm-none-eabi',
-         'binutils-arm-none-eabi', 'libnewlib-arm-none-eabi', 'openocd', 'usbutils', 'python3-venv', 'build-essential'], timeout=7200)
-    return {'message': '系统编译/烧录工具已安装。IMU 要求 CMake ≥3.29；不足时编译按钮会为当前用户准备独立 CMake 环境。'}
+    tool_set = getattr(args, 'tool_set', 'imu')
+    packages = TOOL_PACKAGES[tool_set]
+    query = subprocess.run(['dpkg-query', '-W', '-f=${binary:Package}\t${Status}\n', *packages],
+                           capture_output=True, text=True, timeout=30)
+    installed = {fields[0].split(':')[0] for line in query.stdout.splitlines()
+                 if len(fields := line.split('\t', 1)) == 2 and fields[1] == 'install ok installed'}
+    missing = [package for package in packages if package not in installed]
+    if missing:
+        print('仅安装缺失的依赖：' + ', '.join(missing) + '；不安装推荐软件包。', flush=True)
+        run(['apt-get', 'update'], timeout=1800)
+        run(['apt-get', 'install', '-y', '--no-install-recommends', '--no-upgrade', *missing], timeout=7200)
+    label = 'IMU 编译依赖' if tool_set == 'imu' else 'OpenOCD 烧录工具'
+    return {'tool_set': tool_set, 'packages': missing,
+            'message': label + ('已安装。' if missing else '已齐全，无需下载。') +
+            ('不安装 ARM C++ 标准库。CMake 不足时，编译按钮会准备当前用户独立的 CMake 环境。' if tool_set == 'imu' else '')}
 
 
 def prepare_imu(args):
@@ -559,7 +582,7 @@ def compile_imu(args):
     main = source / 'Core/Src/main.c'
     main.write_text(patch_imu_source(main.read_text(), ids))
     build = variant / 'build/Release'
-    run([cmake, '-S', source, '-B', build, '-DCMAKE_BUILD_TYPE=Release'], timeout=180)
+    run([cmake, '-S', source, '-B', build, '-G', 'Unix Makefiles', '-DCMAKE_BUILD_TYPE=Release'], timeout=180)
     run([cmake, '--build', build, '--target', 'hipnucimu.elf', '--parallel', min(4, os.cpu_count() or 1)], timeout=900)
     image = build / 'hipnucimu.elf'
     flash_ranges(image)
@@ -582,7 +605,7 @@ ACTIONS = {'inspect': inspect, 'enable-rt': enable_rt, 'attach-pro': attach_pro,
 
 def main(argv=None):
     def interrupted(signum, frame):
-        raise InterruptedError('任务被取消')
+        raise JobCancelled('任务被取消')
     signal.signal(signal.SIGTERM, interrupted)
     parser = argparse.ArgumentParser(description='Ecat GroundStation first-run job')
     parser.add_argument('action', choices=ACTIONS)
@@ -596,6 +619,7 @@ def main(argv=None):
     parser.add_argument('--non-rt-cpus', default='1')
     parser.add_argument('--domain', type=int, default=0)
     parser.add_argument('--target', choices=('h750', 'g431'), default='h750')
+    parser.add_argument('--tool-set', choices=('imu', 'flash'), default='imu')
     parser.add_argument('--serial', default='')
     parser.add_argument('--speed', type=int, default=400)
     parser.add_argument('--base', default='0x08000000')

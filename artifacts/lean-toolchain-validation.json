@@ -1,0 +1,23 @@
+{
+  "source_commit": "406e6851f5071db2f1ffeff294d03e6dc43ed446",
+  "profile": 1,
+  "ids": [
+    1,
+    2,
+    3
+  ],
+  "sha256": "4dfa4d1af67c67e6ac5d68f72ece56a725aaf84960e2dcb57101b5367ea2f851",
+  "matches_previous_firmware": true,
+  "cxx_static_library_in_validation_toolchain": false,
+  "hardware_flashed": false,
+  "imu_packages": [
+    "cmake",
+    "make",
+    "gcc-arm-none-eabi",
+    "libnewlib-arm-none-eabi",
+    "python3-venv"
+  ],
+  "flash_packages": [
+    "openocd"
+  ]
+}

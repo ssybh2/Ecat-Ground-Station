@@ -5,6 +5,9 @@ import json
 import os
 import shutil
 import subprocess
+import signal
+import time
+import selectors
 
 import pytest
 
@@ -15,6 +18,67 @@ from ecat_groundstation.setup_core import Cpu
 
 def git(directory, *args):
     return subprocess.check_output(['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', *args], cwd=directory, text=True)
+
+
+@pytest.mark.parametrize('tool_set,missing', [('imu', ['gcc-arm-none-eabi', 'libnewlib-arm-none-eabi']), ('flash', ['openocd']), ('imu', [])])
+def test_install_only_missing_minimal_packages_without_recommends(monkeypatch, tool_set, missing):
+    monkeypatch.setattr(worker, 'require_root', lambda: None)
+    packages = worker.TOOL_PACKAGES[tool_set]
+
+    def status(command, **kwargs):
+        assert command[0] == 'dpkg-query'
+        output = ''.join(package + '\tinstall ok installed\n' for package in packages if package not in missing)
+        return subprocess.CompletedProcess(command, 1 if missing else 0, stdout=output, stderr='')
+
+    monkeypatch.setattr(worker.subprocess, 'run', status)
+    commands = []
+    monkeypatch.setattr(worker, 'run', lambda command, **kwargs: commands.append(command))
+    result = worker.install_tools(Namespace(tool_set=tool_set))
+    assert result['packages'] == missing
+    if missing:
+        assert len(commands) == 2 and commands[0] == ['apt-get', 'update']
+        assert commands[1] == ['apt-get', 'install', '-y', '--no-install-recommends', '--no-upgrade', *missing]
+    else:
+        assert not commands and '无需下载' in result['message']
+    forbidden = {'ninja-build', 'usbutils', 'build-essential', 'libstdc++-arm-none-eabi-newlib'}
+    assert not set(packages) & forbidden
+    if tool_set == 'flash':
+        assert packages == ('openocd',)
+
+
+def test_worker_termination_exits_selector_wait_and_reaps_child(tmp_path):
+    # A real process and pipe wait reproduce the old swallowed InterruptedError.
+    script = tmp_path / 'cancel-worker.py'
+    script.write_text('''import sys\nfrom ecat_groundstation import setup_worker as worker\ndef job(args):\n return worker.run([sys.executable, '-u', '-c', 'import os,time; print("CHILD_PID="+str(os.getpid()),flush=True); time.sleep(60)'])\nworker.ACTIONS['inspect']=job\nraise SystemExit(worker.main(['inspect']))\n''')
+    env = os.environ.copy()
+    env['PYTHONPATH'] = str(Path(__file__).resolve().parents[1])
+    process = subprocess.Popen(['/usr/bin/python3', '-u', str(script)], env=env,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    child_pid = None
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ)
+    output = b''
+    try:
+        deadline = time.monotonic() + 5
+        while child_pid is None and time.monotonic() < deadline:
+            for key, _ in selector.select(.1):
+                output += os.read(key.fd, 65536)
+                import re
+                match = re.search(rb'\nCHILD_PID=(\d+)\n', output)
+                if match:
+                    child_pid = int(match[1])
+        assert child_pid is not None, output.decode()
+        process.terminate()
+        remainder, _ = process.communicate(timeout=7)
+        assert process.returncode == 1 and '任务被取消' in remainder.decode()
+        assert not Path(f'/proc/{child_pid}').exists()
+    finally:
+        selector.close()
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        if child_pid is not None and Path(f'/proc/{child_pid}').exists():
+            os.killpg(child_pid, signal.SIGKILL)
 
 
 def test_workspace_git_submodule_recursive_and_retry(tmp_path, monkeypatch):

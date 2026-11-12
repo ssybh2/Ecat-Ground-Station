@@ -31,7 +31,7 @@ PRIVILEGED = {'enable-rt', 'isolate-cpu', 'flash-eeprom', 'diagnose-eeprom', 'pr
 JOB_LABELS = {'inspect': '检查当前电脑', 'enable-rt': '启用实时内核', 'isolate-cpu': 'CPU 核心隔离',
               'create-workspace': '创建工作空间', 'flash-eeprom': '刷写 EEPROM', 'probe-mcu': '检测 MCU',
               'flash-mcu': '烧录与回读校验', 'prepare-imu': '准备 IMU 源码', 'compile-imu': '编译 IMU',
-              'install-tools': '安装编译 / 烧录工具', 'create-bringup': '生成 bringup 包', 'build-workspace': 'colcon build',
+              'install-tools': '安装所选工具的必要依赖', 'create-bringup': '生成 bringup 包', 'build-workspace': 'colcon build',
               'prepare-eeprom-tool': '准备逐字校验工具', 'diagnose-eeprom': 'EEPROM 只读诊断',
               'repair-workspace-access': '修复工作空间写入权限'}
 
@@ -198,6 +198,7 @@ class FirmwarePane(QWidget):
         self.link_status = note('')
         layout.addWidget(self.link_status)
         row = QHBoxLayout()
+        row.addWidget(action_button('安装 OpenOCD', lambda: self.owner.start_job('install-tools', ['--tool-set', 'flash'])))
         row.addWidget(action_button('检测 ST-Link', self.refresh_links))
         row.addWidget(action_button('检测 MCU / halt', lambda: self.execute(False)))
         row.addWidget(action_button('烧录并校验', lambda: self.execute(True), True))
@@ -227,7 +228,7 @@ class FirmwarePane(QWidget):
 
     def execute(self, write):
         if not shutil.which('openocd'):
-            QMessageBox.information(self, '缺少烧录工具', '请先在 IMU 页面点击「安装编译 / 烧录工具」安装 OpenOCD。')
+            QMessageBox.information(self, '缺少烧录工具', '请点击本窗口的「安装 OpenOCD」，无需安装 IMU 编译工具链。')
             return
         self.refresh_links()
         serial = self.link.currentData()
@@ -429,10 +430,11 @@ class FirstSetupPage(QWidget):
         layout.addLayout(form)
         row = QHBoxLayout()
         row.addWidget(action_button('获取 / 检查 IMU 源码', self.prepare_imu, True))
-        row.addWidget(action_button('安装编译 / 烧录工具', lambda: self.start_job('install-tools')))
+        row.addWidget(action_button('安装 IMU 编译依赖', lambda: self.start_job('install-tools', ['--tool-set', 'imu'])))
         row.addWidget(action_button('自选 IMU 固件烧录…', lambda: self.open_firmware('g431')))
         row.addStretch()
         layout.addLayout(row)
+        layout.addWidget(note('仅安装缺失的 C 编译依赖，不安装大型 C++ 库；OpenOCD 可在烧录窗口单独安装。'))
         grid = QGridLayout()
         for c, text in enumerate(('IMU', 'PACKET1 CAN ID', 'PACKET2 CAN ID', 'PACKET3 CAN ID', '编译', '烧录')):
             grid.addWidget(QLabel(text), 0, c)

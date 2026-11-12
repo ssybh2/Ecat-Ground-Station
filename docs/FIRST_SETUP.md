@@ -100,7 +100,7 @@ MCU 检查也会暂停芯片，不只是 USB 枚举。文件会先检查 ARM ELF
 - 检查 ELF，记录 ID、原仓库提交、ELF 绝对路径与 SHA256 到 manifest。
 - 本次构建失败时撤销旧产物在当前行的有效标记；不会把旧 ELF 当成本次结果。
 
-所需 ARM 工具链与 OpenOCD 可以通过 **安装编译 / 烧录工具** 安装。当前仓库要求 CMake ≥3.29；若系统版本较老，编译按钮在当前用户目录建立独立 Python venv，安装 `cmake>=3.29,<4`，不替换系统 CMake。需要联网下载工具或源码。
+**安装 IMU 编译依赖** 只补齐 CMake、Make、ARM GCC、Newlib 和 Python venv，禁用 APT 推荐依赖，不安装大型 ARM C++ 标准库。烧录窗口中的 **安装 OpenOCD** 只安装烧录工具。已经安装的依赖不会重复安装或升级；全部齐全时无需下载。当前仓库要求 CMake ≥3.29；若系统版本较老，编译按钮在当前用户目录建立独立 Python venv，安装 `cmake>=3.29,<4`，不替换系统 CMake。需要联网下载缺失的工具或源码。
 
 产物默认在 `~/.local/share/ecat-groundstation/imu-builds/`。点击对应 **烧录 IMU n**，自动选择该 ID 对应的 ELF，并核对 SHA256；修改 ID 后必须重新编译。也支持自选已有固件。
 
