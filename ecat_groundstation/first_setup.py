@@ -455,10 +455,10 @@ class FirstSetupPage(QWidget):
         row = QHBoxLayout()
         row.addWidget(action_button('获取 / 检查 H750 源码', self.prepare_h750))
         row.addWidget(action_button('编译H750固件', self.compile_h750, True))
-        row.addWidget(action_button('安装 H750 编译依赖', lambda: self.start_job('install-tools', ['--tool-set', 'h750'])))
+        row.addWidget(action_button('安装 H750 轻量基础依赖', lambda: self.start_job('install-tools', ['--tool-set', 'h750'])))
         layout.addLayout(row)
         layout.addWidget(note('选择自己的 H750 源码工程，在普通用户的独立快照中编译，生成 ELF / BIN / HEX。编译完成后，请自主选择产物，再进入烧录页。\n'
-                              'H750 源码含 C++20；可使用已有完整 ARM 工具链。选择安装 H750 依赖时，Ubuntu 22.04 的 ARM C++ 库下载约 347 MB，IMU 的精简依赖不变。'))
+                              '已有 ARM GCC 时，轻量模式只准备约 1 MB 头文件和约 100 KB GNU 源码，为 Cortex-M7 编译运行库并缓存。不会安装 347 MB 多架构库；也可自选完整 ARM 工具链。'))
         self.h750_artifact_label = note('尚未编译；也可以直接选择现有固件烧录。')
         layout.addWidget(self.h750_artifact_label)
         self.h750_use_artifact = action_button('选择编译产物用于烧录…', self.choose_h750_artifact, True)

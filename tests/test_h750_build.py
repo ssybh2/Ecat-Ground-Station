@@ -92,7 +92,7 @@ def test_missing_cpp_libraries_stop_before_build_or_download(firmware_source, tm
     calls = []
     monkeypatch.setattr(worker, 'run', lambda *args, **kwargs: calls.append(args))
     args = args_for(firmware_source, tmp_path)
-    with pytest.raises(ValueError, match=r'完整的 ARM C\+\+'):
+    with pytest.raises(ValueError, match='关闭异常和 RTTI'):
         worker.compile_h750(args)
     assert not calls and not Path(args.output_root).exists()
 
@@ -107,8 +107,8 @@ def test_existing_local_source_check_does_not_clone_or_modify(firmware_source, m
 def test_h750_jobs_are_ordinary_user_and_cpp_dependencies_are_separate():
     assert SetupJobs.command('compile-h750', [])[0] == '/usr/bin/python3'
     assert SetupJobs.command('prepare-h750', [])[0] == '/usr/bin/python3'
-    assert 'libstdc++-arm-none-eabi-newlib' in worker.TOOL_PACKAGES['h750']
-    assert 'libstdc++-arm-none-eabi-newlib' not in worker.TOOL_PACKAGES['imu']
+    assert worker.TOOL_PACKAGES['h750'] == worker.TOOL_PACKAGES['imu']
+    assert all('libstdc++-arm-none-eabi-newlib' not in packages for packages in worker.TOOL_PACKAGES.values())
 
 
 def test_ui_build_offers_choice_without_replacing_selected_firmware(tmp_path, monkeypatch):

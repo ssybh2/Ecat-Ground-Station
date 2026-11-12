@@ -31,6 +31,7 @@ from ecat_groundstation.setup_core import (
     patch_imu_source, sha256_file, atomic_json, openocd_commands, flash_verified, flash_ranges,
 )
 from ecat_groundstation.eeprom_support import build_eeprom_tool, verified_eeprom_tool
+from ecat_groundstation.h750_runtime import prepare_h750_runtime
 
 
 RESULT_PREFIX = '@@ECAT_RESULT@@'
@@ -501,11 +502,10 @@ def flash_mcu(args):
 
 TOOL_PACKAGES = {
     # binutils and newlib headers are hard dependencies of these packages.
-    # IMU needs no C++ library; H750's C++ dependencies are a separate opt-in.
+    # H750 builds its single-architecture C++ runtime in the user's cache.
     'imu': ('cmake', 'make', 'gcc-arm-none-eabi', 'libnewlib-arm-none-eabi', 'python3-venv'),
     'flash': ('openocd',),
-    'h750': ('cmake', 'make', 'gcc-arm-none-eabi', 'libnewlib-arm-none-eabi', 'python3-venv',
-             'libstdc++-arm-none-eabi-dev', 'libstdc++-arm-none-eabi-newlib'),
+    'h750': ('cmake', 'make', 'gcc-arm-none-eabi', 'libnewlib-arm-none-eabi', 'python3-venv'),
 }
 
 
@@ -522,7 +522,7 @@ def install_tools(args):
         print('仅安装缺失的依赖：' + ', '.join(missing) + '；不安装推荐软件包。', flush=True)
         run(['apt-get', 'update'], timeout=1800)
         run(['apt-get', 'install', '-y', '--no-install-recommends', '--no-upgrade', *missing], timeout=7200)
-    label = {'imu': 'IMU 编译依赖', 'flash': 'OpenOCD 烧录工具', 'h750': 'H750 编译依赖'}[tool_set]
+    label = {'imu': 'IMU 编译依赖', 'flash': 'OpenOCD 烧录工具', 'h750': 'H750 轻量基础依赖'}[tool_set]
     return {'tool_set': tool_set, 'packages': missing,
             'message': label + ('已安装。' if missing else '已齐全，无需下载。') +
             ('不安装 ARM C++ 标准库。CMake 不足时，编译按钮会准备当前用户独立的 CMake 环境。' if tool_set == 'imu' else '')}
@@ -649,6 +649,14 @@ def compile_h750(args):
     gcc = shutil.which('arm-none-eabi-gcc', path=env.get('PATH'))
     if not gcc or not shutil.which('arm-none-eabi-objcopy', path=env.get('PATH')):
         raise ValueError('缺少 ARM 编译工具，请选择工具链 bin 目录或安装 H750 编译依赖')
+    toolchain_value = getattr(args, 'toolchain_file', '').strip()
+    toolchain = Path(toolchain_value).expanduser() if toolchain_value else repo / 'cmake/gcc-arm-none-eabi.cmake'
+    if not toolchain.is_absolute():
+        toolchain = repo / toolchain
+    toolchain = toolchain.resolve()
+    if not toolchain.is_file():
+        raise ValueError('找不到 CMake 工具链文件，请选择 gcc-arm-none-eabi.cmake')
+    extra_cmake, runtime_info = [], None
     cpp_sources = any(p.suffix in ('.cpp', '.cc', '.cxx') and
                       not any(part.startswith(('build', 'cmake-build', '.')) for part in p.relative_to(repo).parts)
                       for p in repo.rglob('*') if p.is_file())
@@ -666,14 +674,18 @@ def compile_h750(args):
         library = subprocess.run([gpp, *flags, '-print-file-name=libstdc++.a'],
                                  capture_output=True, text=True, timeout=30, env=env)
         if check.returncode or not Path(library.stdout.strip()).is_file():
-            raise ValueError(f'H750 源码需要完整的 ARM C++{standard} 工具链（含头文件和静态库）。请自选完整工具链，或安装 H750 编译依赖；不会自动下载大型 C++ 库。\n' + check.stderr[-1500:])
-    toolchain_value = getattr(args, 'toolchain_file', '').strip()
-    toolchain = Path(toolchain_value).expanduser() if toolchain_value else repo / 'cmake/gcc-arm-none-eabi.cmake'
-    if not toolchain.is_absolute():
-        toolchain = repo / toolchain
-    toolchain = toolchain.resolve()
-    if not toolchain.is_file():
-        raise ValueError('找不到 CMake 工具链文件，请选择 gcc-arm-none-eabi.cmake')
+            configuration = toolchain.read_text() + (repo / 'CMakeLists.txt').read_text()
+            required_flags = ('-fno-exceptions', '-fno-rtti', '-fno-threadsafe-statics',
+                              '-mcpu=cortex-m7', '-mfpu=fpv5-d16', '-mfloat-abi=hard')
+            if not all(flag in configuration for flag in required_flags):
+                raise ValueError('轻量 H750 运行库用于 Cortex-M7 hard-float、关闭异常和 RTTI 及线程安全静态初始化的工程；此自定义工程请使用完整工具链，不会下载大型库包')
+            env, linker_flags, runtime_info = prepare_h750_runtime(gpp, output_root / 'toolchain/h750-runtime', env, run,
+                                                                 needs_headers=bool(check.returncode))
+            verified = subprocess.run([gpp, *flags, '-std=c++' + str(standard), '-fsyntax-only', '-x', 'c++', '-'],
+                                      input=check_source, capture_output=True, text=True, timeout=30, env=env)
+            if verified.returncode:
+                raise ValueError('ARM C++ 头文件检查未通过：' + verified.stderr[-1500:])
+            extra_cmake = ['-DCMAKE_CXX_STANDARD_LIBRARIES=' + linker_flags]
     modules = repo / '.gitmodules'
     if modules.is_file() and 'ecat/soes' in modules.read_text() and not (repo / 'ecat/soes/soes/esc.c').is_file():
         raise ValueError('SOES 子模块尚未就绪，请先点击获取 / 检查 H750 源码')
@@ -686,7 +698,7 @@ def compile_h750(args):
     selected_toolchain = source / toolchain.relative_to(repo) if toolchain.is_relative_to(repo) else toolchain
     build = variant / 'build' / build_type
     run([cmake, '-S', source, '-B', build, '-G', 'Unix Makefiles', '-DCMAKE_BUILD_TYPE=' + build_type,
-         '-DCMAKE_TOOLCHAIN_FILE=' + str(selected_toolchain)], timeout=180, env=env)
+         '-DCMAKE_TOOLCHAIN_FILE=' + str(selected_toolchain), *extra_cmake], timeout=180, env=env)
     run([cmake, '--build', build, '--target', target, '--parallel', min(4, os.cpu_count() or 1)], timeout=1200, env=env)
     matches = [p for p in build.rglob('*.elf') if p.name in (target, target + '.elf')]
     if len(matches) != 1:
@@ -702,6 +714,7 @@ def compile_h750(args):
             'sha256': sha256_file(image), 'source_commit': head.stdout.strip(), 'source': str(source),
             'build_type': build_type, 'build_target': target, 'toolchain_file': toolchain_value,
             'toolchain_bin': toolchain_bin, 'output_root': str(output_root), 'built_at': stamp,
+            'runtime': runtime_info,
             'message': 'H750 固件编译成功，ELF 已校验并生成 BIN / HEX；可以在现有烧录窗口中选择烧录。'}
     atomic_json(variant / 'manifest.json', data)
     return data

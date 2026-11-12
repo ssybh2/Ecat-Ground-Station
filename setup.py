@@ -2,9 +2,9 @@ from setuptools import setup
 
 setup(
     name='ecat_groundstation',
-    version='0.4.1',
+    version='0.4.2',
     packages=['ecat_groundstation'],
-    package_data={'ecat_groundstation': ['message_fields.json', 'eeprom_native.c']},
+    package_data={'ecat_groundstation': ['message_fields.json', 'eeprom_native.c', 'h750_runtime_sources.json']},
     description='AIM EtherCAT desktop configuration and ROS 2 commissioning station',
     python_requires='>=3.10',
     install_requires=['PyQt5>=5.15', 'PyYAML>=5.4'],

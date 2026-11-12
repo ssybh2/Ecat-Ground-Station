@@ -20,7 +20,7 @@ def git(directory, *args):
     return subprocess.check_output(['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', *args], cwd=directory, text=True)
 
 
-@pytest.mark.parametrize('tool_set,missing', [('imu', ['gcc-arm-none-eabi', 'libnewlib-arm-none-eabi']), ('flash', ['openocd']), ('imu', [])])
+@pytest.mark.parametrize('tool_set,missing', [('imu', ['gcc-arm-none-eabi', 'libnewlib-arm-none-eabi']), ('flash', ['openocd']), ('imu', []), ('h750', [])])
 def test_install_only_missing_minimal_packages_without_recommends(monkeypatch, tool_set, missing):
     monkeypatch.setattr(worker, 'require_root', lambda: None)
     packages = worker.TOOL_PACKAGES[tool_set]
@@ -40,7 +40,7 @@ def test_install_only_missing_minimal_packages_without_recommends(monkeypatch, t
         assert commands[1] == ['apt-get', 'install', '-y', '--no-install-recommends', '--no-upgrade', *missing]
     else:
         assert not commands and '无需下载' in result['message']
-    forbidden = {'ninja-build', 'usbutils', 'build-essential', 'libstdc++-arm-none-eabi-newlib'}
+    forbidden = {'ninja-build', 'usbutils', 'build-essential', 'libstdc++-arm-none-eabi-newlib', 'libstdc++-arm-none-eabi-dev'}
     assert not set(packages) & forbidden
     if tool_set == 'flash':
         assert packages == ('openocd',)

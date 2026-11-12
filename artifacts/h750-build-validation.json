@@ -1,13 +1,18 @@
 {
-  "validation": "real ARM CMake build of a temporary minimal H750 C project",
-  "build_target": "custom_h750",
+  "validation": "official H750 complete source built with the lightweight GNU runtime",
+  "source_commit": "83ee21cef2f3c7970757c178eeeb1fc6d9655819",
+  "compiler": "ARM GCC 10.3.1",
   "build_type": "Release",
-  "image_sha256": "4bb872aefe9cdbe53706335e5bdbe4e755b9fe5cdad68a05cd59e1f153dc8c3f",
+  "image_sha256": "23d6734ad113737400a14ceb1284dc2d45b51a2c7aa9f8af2a8717005670b406",
   "generated": [
     "elf",
     "bin",
     "hex"
   ],
-  "hardware_flashed": false,
-  "official_source_compile": "blocked before build: ARM C++ headers and standard library missing; no large package downloaded"
+  "flash_bytes": 96180,
+  "runtime_bytes": 31290,
+  "gnu_source_and_license_bytes": 101901,
+  "gnu_revision": "f00b5710a30f22efc3171c393e56aeb335c3cd39",
+  "large_cpp_package_installed": false,
+  "hardware_flashed": false
 }

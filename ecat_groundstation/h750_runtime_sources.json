@@ -1,0 +1,42 @@
+{
+  "revision": "f00b5710a30f22efc3171c393e56aeb335c3cd39",
+  "compiler_version": "10.3.1",
+  "flags": [
+    "-mcpu=cortex-m7",
+    "-mthumb",
+    "-mfpu=fpv5-d16",
+    "-mfloat-abi=hard",
+    "-std=c++20",
+    "-Os",
+    "-fno-exceptions",
+    "-fno-rtti",
+    "-fno-threadsafe-statics",
+    "-ffunction-sections",
+    "-fdata-sections"
+  ],
+  "files": {
+    "libstdc++-v3/libsupc++/new_op.cc": "98973bdff6103b612ac9aefcda0e81368fb0f97e28474b22074f019ae0c805e8",
+    "libstdc++-v3/libsupc++/new_opv.cc": "1ff15683aa4c487cffbbef7634aeb49140dd5ae26836208bfac0e47492cf5aa6",
+    "libstdc++-v3/libsupc++/new_opnt.cc": "b8cd2a46b383a2aa443856bfaccd49b1563a0e6099e2e5ea2d01f6e6e873986b",
+    "libstdc++-v3/libsupc++/new_opvnt.cc": "5114fec961839dc64202929e00a62371a70dbcc4249ee13eabf9cf73638f0b56",
+    "libstdc++-v3/libsupc++/new_handler.cc": "fdb137869ed1454cf4076f461b8634bed8df154107b88d3b82efd1ecbeafb7d2",
+    "libstdc++-v3/libsupc++/del_op.cc": "efc2bcd4fc4ca92131341934b00557ed8261617c276e11eac20db218dcedbd68",
+    "libstdc++-v3/libsupc++/del_ops.cc": "d077406e6ce708324d931b1de0e278201904c8da2589e5f76a93abf012927243",
+    "libstdc++-v3/libsupc++/del_opv.cc": "6c9b1ef7245e0afc521b220c8d83ed4ce4f3f352cc06fccddc07e7734f837aa3",
+    "libstdc++-v3/libsupc++/del_opvs.cc": "23d044180b3263bb0ae6811a0e317a575515c244f3bcfca8cd731706e3f7941c",
+    "libstdc++-v3/libsupc++/pure.cc": "413b91f131ef64ca7e7847cdaa6ff8599c0f5c5d3a0bd2a03bef19ed88f3078b",
+    "libstdc++-v3/libsupc++/eh_terminate.cc": "06faecf4dbe3be7ef9c0dcfab793a053e73b1a3967e5c214743811303db85b3a",
+    "libstdc++-v3/libsupc++/eh_term_handler.cc": "f1b8f5ddec4b812361bc966e041e6df1c09bd499cada89aa33c1e5a4b4c93ffb",
+    "libstdc++-v3/libsupc++/eh_unex_handler.cc": "18567cc6415f1fa040a8c7ffe73adcbb8b3d74916c83a0da9afabcbcf5041f3c",
+    "libstdc++-v3/libsupc++/unwind-cxx.h": "892fb24e5e7efe2611df7dcb4d8c61cfc0b62ccf473ae9adf4c98afdcf2a106a",
+    "libstdc++-v3/libsupc++/eh_atomics.h": "02020a66012bcb81b7c1c3f1e3294fc43790fdfa7b9e3e175f83d6147fe3dac6",
+    "libstdc++-v3/libsupc++/eh_term_handler.h": "720507eb29a18331690177ea676b814cc8fee36d1ad025248f33a7c057d33efe",
+    "libstdc++-v3/src/c++98/tree.cc": "0b4c60586616ff2de15b22a5ebe9dc1cf2521d9742261ab65bada5e0937ba253",
+    "libstdc++-v3/src/c++11/functexcept.cc": "814cfaf765dfb4dcb61a33377dc238b8e63025c65696ffc00c254282d6e86f66",
+    "libstdc++-v3/src/c++11/snprintf_lite.cc": "1a9f1d69ad370e7a34d00b531889bf08ef1ec42bafd3c641abae4781933d3cc4",
+    "libstdc++-v3/src/c++11/shared_ptr.cc": "6fa670c22e9b022ec46e19ce2ae41972c6f79a8955ef585fb05ac190374a2e98",
+    "libstdc++-v3/src/c++11/mutex_pool.h": "04b3e638b8c42e99c45f21159b749c614b7fec3232929e8a57d8ce4f170150df",
+    "COPYING3": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+    "COPYING.RUNTIME": "9d6b43ce4d8de0c878bf16b54d8e7a10d9bd42b75178153e3af6a815bdc90f74"
+  }
+}
