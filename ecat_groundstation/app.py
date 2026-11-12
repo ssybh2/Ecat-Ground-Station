@@ -62,12 +62,27 @@ QTabWidget::pane { border: 1px solid #293b49; }
 QTabBar::tab { background: #192631; color: #8fa5b6; padding: 10px 20px; }
 QTabBar::tab:selected { color: #6bdfc7; background: #243b46; }
 QCheckBox { padding: 7px 0; }
+QCheckBox#outputPermission {
+    color: #fff1b6; background: #483619; border: 2px solid #e9ac36;
+    border-radius: 6px; padding: 8px 10px; spacing: 10px;
+    font-size: 15px; font-weight: 700;
+}
+QCheckBox#outputPermission:hover { background: #5a431e; border-color: #ffe095; }
+QCheckBox#outputPermission:checked { color: #effff9; background: #174b3f; border-color: #5bd6bc; }
+QCheckBox#outputPermission:checked:hover { background: #205e4f; border-color: #a2ffe5; }
+QCheckBox#outputPermission::indicator {
+    width: 24px; height: 24px; border: 2px solid #ffcf5a;
+    border-radius: 4px; background: #fff6dc;
+}
+QCheckBox#outputPermission::indicator:checked {
+    border-color: #a2ffe5; background: #5bd6bc; image: url("@OUTPUT_CHECK@");
+}
 QSplitter::handle { background: #273a48; }
 QStatusBar { background: #111c25; color: #8ca7b8; }
 QMenuBar, QMenu { background: #192631; }
 QMenu::item:selected { background: #254e59; }
 QToolTip { color: #e0edf3; background: #243845; border: 1px solid #466173; padding: 6px; }
-'''
+'''.replace('@OUTPUT_CHECK@', Path(__file__).with_name('output_enabled.svg').as_posix())
 
 
 def button(text, slot, name=None):

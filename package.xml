@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>ecat_groundstation</name>
-  <version>0.4.5</version>
+  <version>0.4.6</version>
   <description>AIM EtherCAT desktop configuration and ROS 2 commissioning station</description>
   <maintainer email="maintainer@example.invalid">Ecat GroundStation contributors</maintainer>
   <license>LGPL-2.1-or-later</license>
