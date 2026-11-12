@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>ecat_groundstation</name>
+  <version>0.1.0</version>
+  <description>AIM EtherCAT desktop configuration and ROS 2 commissioning station</description>
+  <maintainer email="maintainer@example.invalid">Ecat GroundStation contributors</maintainer>
+  <license>LGPL-2.1-or-later</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>custom_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>python3-pyqt5</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>

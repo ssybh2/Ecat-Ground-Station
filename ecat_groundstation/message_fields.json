@@ -1,0 +1,99 @@
+{
+  "WriteDDMotor": {
+    "motor1_enable": "uint8",
+    "motor1_cmd": "int16",
+    "motor2_enable": "uint8",
+    "motor2_cmd": "int16",
+    "motor3_enable": "uint8",
+    "motor3_cmd": "int16",
+    "motor4_enable": "uint8",
+    "motor4_cmd": "int16"
+  },
+  "WriteDJIMotor": {
+    "motor1_enable": "uint8",
+    "motor1_cmd": "int16",
+    "motor2_enable": "uint8",
+    "motor2_cmd": "int16",
+    "motor3_enable": "uint8",
+    "motor3_cmd": "int16",
+    "motor4_enable": "uint8",
+    "motor4_cmd": "int16"
+  },
+  "WriteDSHOT": {
+    "channel1": "uint16",
+    "channel2": "uint16",
+    "channel3": "uint16",
+    "channel4": "uint16"
+  },
+  "WriteDmMotorMITControl": {
+    "enable": "uint8",
+    "p_des": "float32",
+    "v_des": "float32",
+    "kp": "float32",
+    "kd": "float32",
+    "torque": "float32"
+  },
+  "WriteDmMotorPositionControlWithSpeedLimit": {
+    "enable": "uint8",
+    "position": "float32",
+    "speed": "float32"
+  },
+  "WriteDmMotorSpeedControl": {
+    "enable": "uint8",
+    "speed": "float32"
+  },
+  "WriteExternalPWM": {
+    "channels": "uint16[]"
+  },
+  "WriteLkMotorBroadcastCurrentControl": {
+    "motor1_cmd": "int16",
+    "motor2_cmd": "int16",
+    "motor3_cmd": "int16",
+    "motor4_cmd": "int16"
+  },
+  "WriteLkMotorMultiRoundPositionControl": {
+    "enable": "uint8",
+    "angle": "int32"
+  },
+  "WriteLkMotorMultiRoundPositionControlWithSpeedLimit": {
+    "enable": "uint8",
+    "speed_limit": "uint16",
+    "angle": "int32"
+  },
+  "WriteLkMotorOpenloopControl": {
+    "enable": "uint8",
+    "torque": "int16"
+  },
+  "WriteLkMotorSingleRoundPositionControl": {
+    "enable": "uint8",
+    "direction": "uint8",
+    "angle": "uint32"
+  },
+  "WriteLkMotorSingleRoundPositionControlWithSpeedLimit": {
+    "enable": "uint8",
+    "direction": "uint8",
+    "speed_limit": "uint16",
+    "angle": "uint32"
+  },
+  "WriteLkMotorSpeedControlWithTorqueLimit": {
+    "enable": "uint8",
+    "torque_limit": "int16",
+    "speed": "int32"
+  },
+  "WriteLkMotorTorqueControl": {
+    "enable": "uint8",
+    "torque": "int16"
+  },
+  "WriteOnBoardPWM": {
+    "channel1": "uint16",
+    "channel2": "uint16",
+    "channel3": "uint16",
+    "channel4": "uint16"
+  },
+  "WriteSuperCap": {
+    "cap_enable": "uint8",
+    "do_charge": "uint8",
+    "max_charge_power": "uint8",
+    "allow_charge_power": "uint8"
+  }
+}

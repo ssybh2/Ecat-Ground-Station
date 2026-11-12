@@ -1,0 +1,59 @@
+{
+  "slaves": [
+    {
+      "sn": "4587574",
+      "model": "standard",
+      "tasks": [
+        {
+          "type_id": 12,
+          "values": {
+            "sdowrite_connection_lost_write_action": 2,
+            "sdowrite_control_period": 1,
+            "sdowrite_can_id": 1,
+            "sdowrite_master_id": 17,
+            "sdowrite_can_inst": 1,
+            "sdowrite_control_type": 1,
+            "conf_pmax": 3.1415927,
+            "conf_vmax": 30.0,
+            "conf_tmax": 10.0,
+            "conf_connection_lost_read_action": 2,
+            "pub_topic": "/ecat/sn4587574/app1/read",
+            "sub_topic": "/ecat/sn4587574/app1/write"
+          },
+          "extras": {}
+        },
+        {
+          "type_id": 6,
+          "values": {
+            "sdowrite_connection_lost_write_action": 2,
+            "sdowrite_port_id": 2,
+            "sdowrite_pwm_period": 20000,
+            "sdowrite_init_value": 1500,
+            "sub_topic": "/ecat/sn4587574/app2/write"
+          },
+          "extras": {}
+        },
+        {
+          "type_id": 3,
+          "values": {
+            "sdowrite_can_inst": 2,
+            "sdowrite_packet1_id": 1,
+            "sdowrite_packet2_id": 2,
+            "sdowrite_packet3_id": 3,
+            "conf_frame_name": "imu_link",
+            "conf_connection_lost_read_action": 2,
+            "pub_topic": "/ecat/sn4587574/app3/read"
+          },
+          "extras": {}
+        }
+      ],
+      "latency_topic": "/ecat/sn4587574/latency"
+    }
+  ],
+  "interface": "enp2s0",
+  "rt_cpu": 6,
+  "non_rt_cpus": "0-5,7-15",
+  "ros_domain": 24,
+  "workspace": "/home/hby/Rolling_ZLT",
+  "format": "ecat-groundstation/v1"
+}
