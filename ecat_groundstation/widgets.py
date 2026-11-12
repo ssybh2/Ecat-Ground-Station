@@ -3,6 +3,7 @@ import csv
 from datetime import datetime
 import json
 import math
+import time
 
 from PyQt5.QtCore import Qt, QTimer, QRectF, QPointF
 from PyQt5.QtGui import QPainter, QColor, QPen, QPainterPath, QFont
@@ -32,13 +33,28 @@ class Scope(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.samples = deque(maxlen=240)
+        self.series = {}
+        self.empty_text = '等待反馈数据'
+        self.colors = ('#53d8c1', '#f4b663', '#78aaff', '#df8ef3')
         self.setMinimumHeight(185)
         self.setMinimumWidth(220)
 
-    def push(self, value):
-        if isinstance(value, (int, float)) and math.isfinite(value):
-            self.samples.append(value)
-            self.update()
+    def clear(self):
+        self.samples.clear()
+        self.series.clear()
+        self.update()
+
+    def push(self, value, timestamp=None):
+        timestamp = time.monotonic() if timestamp is None else timestamp
+        values = value if isinstance(value, dict) else {'value': value}
+        for name, sample in values.items():
+            if isinstance(sample, (int, float)) and math.isfinite(sample):
+                self.series.setdefault(name, deque(maxlen=240)).append((timestamp, sample))
+        if values:
+            first = next(iter(values.values()))
+            if isinstance(first, (int, float)) and math.isfinite(first):
+                self.samples.append(first)
+        self.update()
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -54,23 +70,34 @@ class Scope(QWidget):
             p.drawLine(QPointF(x, rect.top()), QPointF(x, rect.bottom()))
         p.setPen(QColor('#8298a9'))
         p.setFont(QFont('DejaVu Sans', 9))
-        if not self.samples:
-            p.drawText(rect, Qt.AlignCenter, '等待反馈数据')
+        if not any(self.series.values()):
+            p.drawText(rect, Qt.AlignCenter, self.empty_text)
             return
-        lo, hi = min(self.samples), max(self.samples)
+        latest = max(points[-1][0] for points in self.series.values() if points)
+        visible = [v for points in self.series.values() for stamp, v in points if stamp >= latest - 12]
+        lo, hi = min(visible), max(visible)
         span = max(hi - lo, abs(hi) * .1, .01)
         lo -= span * .15
         hi += span * .15
         p.drawText(QRectF(0, rect.top() - 8, 50, 20), Qt.AlignRight, f'{hi:.3g}')
         p.drawText(QRectF(0, rect.bottom() - 8, 50, 20), Qt.AlignRight, f'{lo:.3g}')
-        p.drawText(QRectF(rect.left(), rect.bottom() + 5, rect.width(), 20), Qt.AlignRight, '最近 12 秒 · 界面采样 20 Hz')
-        path = QPainterPath()
-        for i, sample in enumerate(self.samples):
-            x = rect.left() + i / 239 * rect.width()
-            y = rect.bottom() - (sample - lo) / (hi - lo) * rect.height()
-            path.moveTo(x, y) if i == 0 else path.lineTo(x, y)
-        p.setPen(QPen(QColor('#53d8c1'), 2))
-        p.drawPath(path)
+        p.drawText(QRectF(rect.left(), rect.bottom() + 5, rect.width(), 20), Qt.AlignRight, '接收时间 · −12 s → 0 s · 界面采样最多 20 Hz')
+        for index, (name, points) in enumerate(self.series.items()):
+            path = QPainterPath()
+            first = True
+            for stamp, sample in points:
+                if stamp < latest - 12:
+                    continue
+                x = rect.left() + (stamp - latest + 12) / 12 * rect.width()
+                y = rect.bottom() - (sample - lo) / (hi - lo) * rect.height()
+                path.moveTo(x, y) if first else path.lineTo(x, y)
+                first = False
+            color = QColor(self.colors[index % len(self.colors)])
+            p.setPen(QPen(color, 2))
+            p.drawPath(path)
+            if points:
+                p.drawText(QRectF(rect.left() + 8, rect.top() + index * 18, rect.width() - 12, 18),
+                           Qt.AlignLeft, f'{name}  {points[-1][1]:.4g}')
 
 
 class Topology(QWidget):
@@ -122,10 +149,11 @@ class CommandPanel(QDialog):
         self.setWindowTitle(f'{SPECS[task.type_id].name} — {key}')
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.setWindowFlag(Qt.Window, True)
-        self.resize(1020, 700)
+        self.resize(1100, 820)
         self.editors = {}
         self.records = deque(maxlen=20000)
         self.last_count = -1
+        self.publish_until = 0
         self.init_ui()
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.poll)
@@ -141,7 +169,10 @@ class CommandPanel(QDialog):
         info.setTextInteractionFlags(Qt.TextSelectableByMouse)
         info.setObjectName('muted')
         layout.addWidget(info)
-        self.mode_label = QLabel('离线演示 · 数据为模拟值' if self.bridge.mode == 'demo' else 'ROS 2 实时连接 · 按住运行以发送命令')
+        self.mode_label = QLabel('离线演示 · 数据为模拟值' if self.bridge.mode == 'demo' else
+                                ('ROS 2 · 编辑数值不会发送；允许输出后点击「发布（定时）」或按住运行' if wtype else
+                                 'ROS 2 反馈监视 · 按接收时间绘图；可选择字段或 IMU 多轴曲线'))
+        self.mode_label.setWordWrap(True)
         self.mode_label.setObjectName('notice')
         layout.addWidget(self.mode_label)
         split = QSplitter()
@@ -163,19 +194,41 @@ class CommandPanel(QDialog):
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
             scroll.setWidget(form_widget)
+            scroll.setMinimumHeight(180)
             ll.addWidget(scroll, 1)
             self.arm = QCheckBox('允许当前执行器输出（默认禁用）')
             self.arm.toggled.connect(lambda enabled: self.bridge.arm(self.key, enabled))
             ll.addWidget(self.arm)
+            publish_row = QHBoxLayout()
+            self.publish_duration = QDoubleSpinBox()
+            self.publish_duration.setRange(.1, 10.)
+            self.publish_duration.setValue(1.)
+            self.publish_duration.setSuffix(' s')
+            self.publish_duration.setSingleStep(.1)
+            publish_row.addWidget(self.publish_duration)
+            self.publish = QPushButton('发布（定时）')
+            self.publish.setAutoDefault(False)
+            self.publish.setObjectName('primary')
+            self.publish.clicked.connect(self.begin_publish)
+            publish_row.addWidget(self.publish)
+            ll.addLayout(publish_row)
+            self.command_preview = QLabel()
+            self.command_preview.setWordWrap(True)
+            self.command_preview.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            self.command_preview.setObjectName('muted')
+            ll.addWidget(self.command_preview)
+            for editor, _ in self.editors.values():
+                editor.valueChanged.connect(self.update_command_preview)
+            self.update_command_preview()
             self.run = QPushButton('按住运行 · 松开释放')
             self.run.setObjectName('primary')
             self.run.setMinimumHeight(46)
-            self.run.released.connect(lambda: self.bridge.release(self.key))
+            self.run.released.connect(self.stop_publish)
             ll.addWidget(self.run)
             stop = QPushButton('禁用当前执行器')
             stop.clicked.connect(self.disarm)
             ll.addWidget(stop)
-            note = QLabel('电机：释放后禁用；LK 广播发送零电流。\nPWM / DSHOT：释放后恢复配置初值。\n软件无法替代硬件急停和固件看门狗。')
+            note = QLabel('20 Hz 定时发布；到时、失焦或禁用后释放。\nPWM / DSHOT 恢复初值；电机禁用，LK 广播零电流。\n发送成功不代表硬件已执行。')
             note.setWordWrap(True)
             note.setObjectName('muted')
             ll.addWidget(note)
@@ -187,13 +240,23 @@ class CommandPanel(QDialog):
         split.addWidget(left)
         right = QWidget()
         rl = QVBoxLayout(right)
+        if wtype and not rtype:
+            rl.addWidget(QLabel('已发布命令（此任务没有实物反馈）'))
         self.trace = QComboBox()
-        self.trace.currentTextChanged.connect(lambda: self.scope.samples.clear())
         rl.addWidget(self.trace)
         self.scope = Scope()
+        if not rtype:
+            self.scope.empty_text = '尚未发布命令'
+        self.trace.currentTextChanged.connect(self.scope.clear)
+        if self.task.type_id == 3:
+            self.trace.addItem('角速度 XYZ · rad/s', ['angular_velocity.' + axis for axis in 'xyz'])
+            self.trace.addItem('加速度 XYZ · m/s²', ['linear_acceleration.' + axis for axis in 'xyz'])
+            self.trace.addItem('四元数 WXYZ', ['orientation.' + axis for axis in 'wxyz'])
+        elif self.task.type_id in (4, 6):
+            self.trace.addItem('已发布四通道指令', ['channel' + str(i) for i in range(1, 5)])
         rl.addWidget(self.scope)
         self.feedback_table = QTableWidget(0, 2)
-        self.feedback_table.setHorizontalHeaderLabels(['反馈字段', '当前值'])
+        self.feedback_table.setHorizontalHeaderLabels(['反馈字段' if rtype else '已发送字段', '当前值'])
         self.feedback_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.feedback_table.setEditTriggers(QTableWidget.NoEditTriggers)
         rl.addWidget(self.feedback_table, 1)
@@ -237,8 +300,31 @@ class CommandPanel(QDialog):
         return values
 
     def disarm(self):
+        self.publish_until = 0
         if hasattr(self, 'arm'):
             self.arm.setChecked(False)
+        self.bridge.release(self.key)
+
+    def update_command_preview(self):
+        self.command_preview.setText('将发布：' + json.dumps(self.values(), ensure_ascii=False))
+
+    def begin_publish(self):
+        if not self.arm.isChecked():
+            self.state.setText('尚未发送：请先勾选「允许当前执行器输出」。')
+            return
+        if not self.isActiveWindow():
+            return
+        try:
+            if self.bridge.renew(self.key, self.values()):
+                self.publish_until = time.monotonic() + self.publish_duration.value()
+            else:
+                self.disarm()
+        except ValueError as exc:
+            self.disarm()
+            self.state.setText(str(exc))
+
+    def stop_publish(self):
+        self.publish_until = 0
         self.bridge.release(self.key)
 
     def poll(self):
@@ -250,7 +336,9 @@ class CommandPanel(QDialog):
         if hasattr(self, 'arm'):
             if self.arm.isChecked() and not snapshot['armed']:
                 self.arm.setChecked(False)
-            if self.run.isDown() and self.arm.isChecked() and self.isActiveWindow():
+            publishing = self.publish_until > time.monotonic()
+            self.publish.setText(f'发布中 · {max(0, self.publish_until - time.monotonic()):.1f} s' if publishing else '发布（定时）')
+            if (self.run.isDown() or publishing) and self.arm.isChecked() and self.isActiveWindow():
                 try:
                     if not self.bridge.renew(self.key, self.values()):
                         self.disarm()
@@ -260,23 +348,33 @@ class CommandPanel(QDialog):
                     return
             elif not self.isActiveWindow():
                 self.disarm()
-            elif not self.run.isDown():
+            elif not self.run.isDown() and not publishing:
                 self.bridge.release(self.key)
         age = '—' if not math.isfinite(snapshot['age']) else f"{snapshot['age'] * 1000:.0f} ms"
-        self.state.setText(f"{'● 输出中' if snapshot['active'] else snapshot['reason'] or '待机'}\n"
-                           f"反馈年龄 {age} · 匹配订阅者 {snapshot['receivers']}\n"
+        read = bool(message_types(self.task)[0])
+        statistics = (f"反馈年龄 {age} · {snapshot.get('feedback_hz', 0):.1f} Hz · 发布者 {snapshot.get('feedback_publishers', 0)}"
+                      if read else f"命令匹配订阅者 {snapshot['receivers']} · 无实物反馈")
+        self.state.setText(f"{'● 消息发布中' if snapshot['active'] else snapshot['reason'] or '待机'}\n"
+                           f"{snapshot.get('link_status', '')}\n"
+                           f"{statistics}\n"
                            f"接收 {snapshot['feedback_count']} · 发送 {snapshot['command_count']}")
-        if snapshot['feedback_count'] == self.last_count:
+        count = snapshot['feedback_count'] if read else snapshot['command_count']
+        if count == self.last_count:
             return
-        self.last_count = snapshot['feedback_count']
-        data = flatten(snapshot['feedback'])
+        self.last_count = count
+        data = flatten(snapshot['feedback'] if read else snapshot.get('last_command', {}))
         numeric = [key for key, val in data.items() if isinstance(val, (int, float)) and not key.startswith('header.')]
-        if numeric and self.trace.count() == 0:
-            self.trace.addItems(numeric)
+        existing = {self.trace.itemText(i) for i in range(self.trace.count())}
+        for key in numeric:
+            if key not in existing:
+                self.trace.addItem(key)
+        if numeric and not existing:
             preferred = next((k for k in ('position', 'velocity', 'motor1_rpm', 'motor1_speed', 'temperature') if k in numeric), numeric[0])
             self.trace.setCurrentText(preferred)
-        if self.trace.currentText() in data:
-            self.scope.push(data[self.trace.currentText()])
+        names = self.trace.currentData() or [self.trace.currentText()]
+        selected = {name: data[name] for name in names if name in data}
+        if selected:
+            self.scope.push(selected, snapshot.get('feedback_at' if read else 'command_at') or time.monotonic())
         self.feedback_table.setRowCount(len(data))
         for row, (key, value) in enumerate(data.items()):
             self.feedback_table.setItem(row, 0, QTableWidgetItem(key))

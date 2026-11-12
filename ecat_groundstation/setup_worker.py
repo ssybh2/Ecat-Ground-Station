@@ -33,6 +33,7 @@ from ecat_groundstation.setup_core import (
 from ecat_groundstation.eeprom_support import build_eeprom_tool, verified_eeprom_tool
 from ecat_groundstation.h750_runtime import prepare_h750_runtime
 from ecat_groundstation.h750_snapshot import prepare_h750_snapshot
+from ecat_groundstation.ros_transport import configure_ros_transport
 
 
 RESULT_PREFIX = '@@ECAT_RESULT@@'
@@ -360,9 +361,16 @@ def root_shell(args):
             out.write('source ' + shlex.quote(str(workspace / 'install/setup.bash')) + '\n')
             out.write('cd -- ' + shlex.quote(str(workspace)) + '\n')
             out.write(f'export ROS_DOMAIN_ID={int(args.domain)}\n')
+            transport_env = {}
+            configure_ros_transport(transport_env)
+            out.write('if [[ -z "${FASTRTPS_DEFAULT_PROFILES_FILE:-}" && -z "${FASTDDS_DEFAULT_PROFILES_FILE:-}" ]]; then\n')
+            for key, value in transport_env.items():
+                out.write('export ' + key + '=' + shlex.quote(value) + '\n')
+            out.write('fi\n')
             out.write("export PS1='(EtherCAT root) \\w # '\n")
             out.write("printf '\\n工作空间已加载，请手动执行：\\nros2 launch soem_bringup bringup.launch.py\\n\\n'\n")
             out.write("printf 'ROS 日志目录：%s\\n' \"$ROS_LOG_DIR\"\n")
+            out.write("printf 'ROS_DOMAIN_ID：%s\\nDDS 配置：%s\\n' \"$ROS_DOMAIN_ID\" \"${FASTRTPS_DEFAULT_PROFILES_FILE:-环境默认}\"\n")
         subprocess.call(['/bin/bash', '--noprofile', '--rcfile', rc, '-i'], cwd=workspace)
     finally:
         Path(rc).unlink(missing_ok=True)

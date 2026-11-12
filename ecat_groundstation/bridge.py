@@ -16,6 +16,7 @@ import traceback
 
 from .schema import message_types
 from .commands import neutral_values, validate_command, feedback_problem, verify_message_class
+from .ros_transport import configure_ros_transport
 
 
 @dataclass
@@ -35,6 +36,12 @@ class Endpoint:
     lease: tuple | None = None
     publisher: object = None
     message_class: object = None
+    feedback_publishers: int = 0
+    read_types: list = field(default_factory=list)
+    write_types: list = field(default_factory=list)
+    feedback_times: object = field(default_factory=lambda: deque(maxlen=200))
+    last_command: dict = field(default_factory=dict)
+    command_at: float = 0
 
 
 class Bridge:
@@ -115,7 +122,7 @@ class Bridge:
             ep = self.endpoints[key]
             ep.lease = None
             ep.armed = bool(enabled) and not self.stopped
-            ep.reason = '' if ep.armed else '控制未授权'
+            ep.reason = '' if ep.armed else (ep.reason or '控制未授权')
             return ep.armed
 
     def renew(self, key, values):
@@ -134,8 +141,38 @@ class Bridge:
                           'age': now - ep.feedback_at if ep.feedback_at else float('inf'),
                           'feedback_count': ep.feedback_count, 'command_count': ep.command_count,
                           'receivers': ep.receiver_count, 'reason': ep.reason, 'active': ep.active,
-                          'armed': ep.armed}
+                          'armed': ep.armed, 'feedback_at': ep.feedback_at,
+                          'feedback_publishers': ep.feedback_publishers,
+                          'last_command': copy.deepcopy(ep.last_command), 'command_at': ep.command_at,
+                          'foreign_publishers': ep.foreign_publishers,
+                          'read_types': list(ep.read_types), 'write_types': list(ep.write_types),
+                          'feedback_hz': ((len(ep.feedback_times) - 1) / (ep.feedback_times[-1] - ep.feedback_times[0])
+                                          if now - ep.feedback_at <= self.FEEDBACK_TIMEOUT and len(ep.feedback_times) > 1
+                                          and ep.feedback_times[-1] > ep.feedback_times[0] else 0),
+                          'link_status': self.link_status(ep, now)}
                     for key, ep in self.endpoints.items()}
+
+    def link_status(self, ep, now):
+        read, write = message_types(ep.task)
+        if read:
+            if ep.read_types and read not in ep.read_types:
+                return '反馈消息类型不匹配'
+            if self.mode == 'ros' and not ep.feedback_publishers:
+                return '未发现反馈发布者 · 检查主站 / Domain / 话题'
+            if not ep.feedback_at:
+                return '已发现发布者但未收到数据 · 检查 DDS 传输 / QoS'
+            if now - ep.feedback_at > self.FEEDBACK_TIMEOUT:
+                return '反馈已过期 · 主站停止或数据链路中断'
+            return '反馈接收正常'
+        if write:
+            if ep.write_types and write not in ep.write_types:
+                return '命令消息类型不匹配'
+            if self.mode == 'ros' and ep.receiver_count < 1:
+                return '未发现命令订阅者 · 检查主站 / Domain / 话题'
+            if ep.foreign_publishers:
+                return '存在其他命令发布者 · 请关闭其他控制连接'
+            return '命令订阅已匹配 · 此任务无反馈'
+        return '无收发话题'
 
     def _gate(self, ep, now, real):
         if self.stopped:
@@ -187,6 +224,8 @@ class Bridge:
             set_message_fields(msg, values)
             ep.publisher.publish(msg)
         ep.command_count += 1
+        ep.last_command = copy.deepcopy(values)
+        ep.command_at = time.monotonic()
 
     def _run_demo(self, project):
         self.ready.set()
@@ -208,6 +247,12 @@ class Bridge:
                                                         f'motor{i}_error_code': 0})
                             ep.feedback_at = now
                             ep.feedback_count += 1
+                            ep.feedback_times.append(now)
+                            ep.feedback_publishers = 1
+                            if ep.task.type_id == 3:
+                                ep.feedback = {'orientation': {'w': math.cos(phase / 2), 'x': 0., 'y': 0., 'z': math.sin(phase / 2)},
+                                               'angular_velocity': {'x': .1 * math.sin(phase), 'y': .2 * math.cos(phase), 'z': .8},
+                                               'linear_acceleration': {'x': .1 * math.cos(phase), 'y': 0., 'z': 9.81}}
                         ep.receiver_count = 1
                     self._tick(now, False)
                     self.latencies = {s.sn: 0.18 for s in project.slaves}
@@ -219,6 +264,7 @@ class Bridge:
     def _run_ros(self, project):
         context = node = executor = None
         try:
+            self.log(configure_ros_transport())
             import rclpy
             from rclpy.context import Context
             from rclpy.executors import SingleThreadedExecutor
@@ -245,6 +291,7 @@ class Bridge:
                             endpoint.feedback = dict(message_to_ordereddict(msg))
                             endpoint.feedback_at = time.monotonic()
                             endpoint.feedback_count += 1
+                            endpoint.feedback_times.append(endpoint.feedback_at)
                     node.create_subscription(get_message(read), ep.task.values['pub_topic'], receive, qos)
             from std_msgs.msg import Float32
             for slave in project.slaves:
@@ -254,7 +301,7 @@ class Bridge:
                 node.create_subscription(Float32, slave.latency_topic, latency, qos)
             self.mode = 'ros'
             self.ready.set()
-            self.log(f'ROS 2 已连接，Domain {project.ros_domain}；等待实际主站话题')
+            self.log(f'ROS 2 节点已启动，Domain {project.ros_domain}；等待匹配主站话题和实际数据')
             last_tick = last_graph = 0
             while not self.halt.is_set() and context.ok():
                 executor.spin_once(timeout_sec=0.005)
@@ -270,8 +317,18 @@ class Bridge:
                 if now - last_graph >= 1:
                     graph = node.get_topic_names_and_types()
                     nodes = node.get_node_names_and_namespaces()
+                    endpoint_graph = {}
+                    for key, ep in self.endpoints.items():
+                        read, write = message_types(ep.task)
+                        pubs = node.get_publishers_info_by_topic(ep.task.values['pub_topic']) if read else []
+                        subs = node.get_subscriptions_info_by_topic(ep.task.values['sub_topic']) if write else []
+                        endpoint_graph[key] = (sum(p.topic_type == read for p in pubs),
+                                               sorted({p.topic_type for p in pubs}), sorted({p.topic_type for p in subs}))
                     with self.lock:
                         self.graph, self.nodes = graph, nodes
+                        for key, (count, read_types, write_types) in endpoint_graph.items():
+                            ep = self.endpoints[key]
+                            ep.feedback_publishers, ep.read_types, ep.write_types = count, read_types, write_types
                     last_graph = now
         except Exception as exc:
             self.error = f'{type(exc).__name__}: {exc}'

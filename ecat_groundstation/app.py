@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
     QGridLayout, QStackedWidget, QListWidget, QTreeWidget, QTreeWidgetItem, QSplitter,
     QComboBox, QLineEdit, QFormLayout, QScrollArea, QTableWidget, QTableWidgetItem,
     QHeaderView, QPlainTextEdit, QTabWidget, QFileDialog, QMessageBox, QInputDialog,
-    QAction, QSpinBox, QDoubleSpinBox, QFrame, QAbstractItemView, QProgressBar,
+    QAction, QSpinBox, QDoubleSpinBox, QFrame, QAbstractItemView, QProgressBar, QDialog,
 )
 from .config import Project, Slave, Task, atomic_write, save_project, load_project
 from .schema import SPECS, Field, active_fields, pdo_size, resources, message_types
@@ -368,12 +368,15 @@ class MainWindow(QMainWindow):
         domain.addWidget(self.domain_edit)
         domain.addStretch()
         l.addLayout(domain)
-        self.control_table = table(['任务', '设备', '端口', '命令消息', '反馈状态', '接收 / 发送'])
+        self.control_table = table(['任务', '设备', '端口', '命令消息', '链路状态', '接收 / 发送'])
+        self.control_table.horizontalHeader().setStretchLastSection(False)
+        self.control_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
         self.control_table.cellDoubleClicked.connect(lambda row, col: self.open_panel(row))
         l.addWidget(self.control_table, 1)
         row = QHBoxLayout()
         row.addWidget(button('打开独立调试窗口', lambda: self.open_panel(self.control_table.currentRow()), 'primary'))
         row.addWidget(button('关闭全部调试窗口', self.close_panels))
+        row.addWidget(button('检查话题链路', self.show_link_diagnostics))
         row.addStretch()
         l.addLayout(row)
         tip = QLabel('真实电机控制要求：已启动兼容主站、话题匹配、有效反馈、允许输出并持续按住运行。\n'
@@ -1007,6 +1010,43 @@ class MainWindow(QMainWindow):
             panel.close()
         self.panels.clear()
 
+    def show_link_diagnostics(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle('ROS 2 话题链路（只读）')
+        dialog.resize(960, 650)
+        layout = QVBoxLayout(dialog)
+        view = QPlainTextEdit()
+        view.setReadOnly(True)
+        layout.addWidget(view)
+
+        def update():
+            snapshot = self.bridge.snapshot()
+            lines = [f'工作空间：{self.project.workspace}', f'ROS_DOMAIN_ID：{self.project.ros_domain}',
+                     f'连接模式：{self.bridge.mode} · {self.bridge.error}',
+                     '节点存在不代表主站已接通；以匹配端点和接收计数判断。\n']
+            for slave in self.project.slaves:
+                for i, task in enumerate(slave.tasks, 1):
+                    key = f'sn{slave.sn}/app_{i}'
+                    ep = snapshot.get(key, {})
+                    read, write = message_types(task)
+                    lines.append(f'{key} · {SPECS[task.type_id].name}')
+                    if read:
+                        lines.append(f'  订阅：{task.values["pub_topic"]} [{read}]')
+                        lines.append(f'  主站发布者：{ep.get("feedback_publishers", 0)} · 发现类型：{ep.get("read_types", [])}')
+                        lines.append(f'  已收：{ep.get("feedback_count", 0)} · {ep.get("feedback_hz", 0):.1f} Hz')
+                    if write:
+                        lines.append(f'  发布：{task.values["sub_topic"]} [{write}]')
+                        lines.append(f'  匹配订阅：{ep.get("receivers", 0)} · 其他发布者：{ep.get("foreign_publishers", 0)}')
+                        lines.append(f'  已发：{ep.get("command_count", 0)} · {ep.get("reason", "")}')
+                    lines.append('  ' + ep.get('link_status', '尚未连接') + '\n')
+            lines.append('未发现端点：核对主站、Domain、工作空间话题。已发现但无数据：核对 DDS 传输 / QoS。')
+            lines.append('收到 IMU 消息但全零：核对 CAN 端口、ID、供电和固件；图像不能替代实物检查。')
+            view.setPlainText('\n'.join(lines))
+
+        layout.addWidget(button('刷新（不发送控制指令）', update))
+        update()
+        dialog.exec_()
+
     def append_log(self, text):
         self.log_view.appendPlainText(f'[{time.strftime("%H:%M:%S")}] {text}')
 
@@ -1033,7 +1073,7 @@ class MainWindow(QMainWindow):
         self.domain_edit.setEnabled(not connected and not self.first_setup.busy)
         self.config_cancel_btn.setEnabled(self.config_build_active and self.first_setup.busy)
         modes = {'disconnected': '离线编辑 · 配置尚未应用至硬件', 'demo': '离线演示 · 所有数据均为模拟值',
-                 'connecting': '正在初始化 ROS 2…', 'ros': f'ROS 2 已连接 · Domain {self.project.ros_domain} · 以反馈确认设备在线',
+                 'connecting': '正在初始化 ROS 2…', 'ros': f'ROS 2 节点已启动 · Domain {self.project.ros_domain} · 请查看各任务链路状态',
                  'error': '连接错误 · ' + self.bridge.error}
         status = modes.get(mode, mode)
         self.overview_mode.setText(status)
@@ -1043,11 +1083,14 @@ class MainWindow(QMainWindow):
         for row, key in enumerate(self.control_keys):
             ep = snapshot.get(key)
             if ep and connected:
-                age = ep['age']
-                label = ('演示 · ' if mode == 'demo' else '') + (f'反馈 {age * 1000:.0f} ms' if age < 2 else '无有效反馈')
+                label = ('演示 · ' if mode == 'demo' else '') + ep['link_status']
                 if ep['active']:
-                    label += ' · 输出中'
-                self.control_table.setItem(row, 4, QTableWidgetItem(label))
+                    label += ' · 消息发布中'
+                elif ep['reason'] and message_types(self.bridge.endpoints[key].task)[1]:
+                    label += ' · ' + ep['reason']
+                item = QTableWidgetItem(label)
+                item.setToolTip(label)
+                self.control_table.setItem(row, 4, item)
                 self.control_table.setItem(row, 5, QTableWidgetItem(f"{ep['feedback_count']} / {ep['command_count']}"))
             elif self.control_table.item(row, 4):
                 self.control_table.item(row, 4).setText('未连接')

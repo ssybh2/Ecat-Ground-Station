@@ -147,6 +147,29 @@ def test_bad_old_snapshot_does_not_prevent_loading_workspace(workspace):
     assert any('忽略旧工程快照' in w for w in warnings)
 
 
+def test_root_launch_shell_sets_matching_udp_profile_and_domain_without_launching(workspace, monkeypatch):
+    install = workspace / 'install/soem_bringup/share/soem_bringup'
+    for name in ('config/config.yaml', 'launch/bringup.launch.py'):
+        destination = install / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(workspace / 'src/soem_bringup' / name, destination)
+    (workspace / 'install/setup.bash').write_text('# test setup\n')
+    monkeypatch.setattr(worker, 'require_root', lambda: None)
+    scripts = []
+    def capture(command, **kwargs):
+        scripts.append(Path(command[3]).read_text())
+        return 0
+    monkeypatch.setattr(worker.subprocess, 'call', capture)
+    worker.root_shell(Namespace(workspace=str(workspace), ros_setup='/opt/ros/humble/setup.bash', domain=24))
+    assert len(scripts) == 1
+    assert 'export ROS_DOMAIN_ID=24' in scripts[0]
+    assert 'fastdds_udp.xml' in scripts[0]
+    assert 'export FASTRTPS_DEFAULT_PROFILES_FILE=' in scripts[0]
+    assert 'if [[ -z' in scripts[0]
+    # The shell only prints the launch command; no master is started by this job.
+    assert '\nros2 launch' not in scripts[0]
+
+
 def test_recreating_bringup_preserves_final_task_configuration(workspace):
     project = project_for(workspace)
     write_workspace_config(project)
