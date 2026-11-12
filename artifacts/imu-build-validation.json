@@ -1,0 +1,66 @@
+{
+  "toolchain": "ARM GNU 10.3.1; CMake 3.31.10; temporary prefix, no system install",
+  "hardware_flashed": false,
+  "results": [
+    {
+      "profile": 1,
+      "ids": [
+        1,
+        2,
+        3
+      ],
+      "sha256": "4dfa4d1af67c67e6ac5d68f72ece56a725aaf84960e2dcb57101b5367ea2f851",
+      "source_commit": "406e6851f5071db2f1ffeff294d03e6dc43ed446",
+      "flash_ranges": [
+        [
+          "0x8000000",
+          15724
+        ],
+        [
+          "0x8003d6c",
+          1084
+        ]
+      ]
+    },
+    {
+      "profile": 2,
+      "ids": [
+        4,
+        5,
+        6
+      ],
+      "sha256": "fdd741fd436646d3d8632a2e0dee748ab6b4ee1aed748e6c5b7e869c6bfd77f4",
+      "source_commit": "406e6851f5071db2f1ffeff294d03e6dc43ed446",
+      "flash_ranges": [
+        [
+          "0x8000000",
+          15720
+        ],
+        [
+          "0x8003d68",
+          1084
+        ]
+      ]
+    },
+    {
+      "profile": 3,
+      "ids": [
+        7,
+        8,
+        9
+      ],
+      "sha256": "4701afcbf67bd40ccce646e0dad4cdd1da9636f7beec47dfe601ea7260c357fa",
+      "source_commit": "406e6851f5071db2f1ffeff294d03e6dc43ed446",
+      "flash_ranges": [
+        [
+          "0x8000000",
+          15720
+        ],
+        [
+          "0x8003d68",
+          1084
+        ]
+      ]
+    }
+  ]
+}

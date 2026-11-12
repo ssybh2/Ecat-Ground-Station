@@ -21,7 +21,7 @@ out = Path(__file__).resolve().parents[1] / 'artifacts'
 out.mkdir(exist_ok=True)
 QTest.qWait(100)
 window.grab().save(str(out / 'overview.png'))
-window.nav.setCurrentRow(1)
+window.nav.setCurrentRow(window.PAGE_CONFIG)
 window.tree.setCurrentItem(window.tree.topLevelItem(0).child(0))
 QTest.qWait(100)
 window.grab().save(str(out / 'configuration.png'))

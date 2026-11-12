@@ -5,24 +5,26 @@ import copy
 import json
 import os
 from pathlib import Path
-import shlex
-import signal
 import sys
 import time
 
-from PyQt5.QtCore import Qt, QTimer, QProcess, QProcessEnvironment
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QColor, QFont
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
     QGridLayout, QStackedWidget, QListWidget, QTreeWidget, QTreeWidgetItem, QSplitter,
     QComboBox, QLineEdit, QFormLayout, QScrollArea, QTableWidget, QTableWidgetItem,
     QHeaderView, QPlainTextEdit, QTabWidget, QFileDialog, QMessageBox, QInputDialog,
-    QAction, QSpinBox, QDoubleSpinBox, QFrame, QAbstractItemView,
+    QAction, QSpinBox, QDoubleSpinBox, QFrame, QAbstractItemView, QProgressBar,
 )
 from .config import Project, Slave, Task, atomic_write, save_project, load_project
 from .schema import SPECS, Field, active_fields, pdo_size, resources, message_types
 from .bridge import Bridge
 from .widgets import Topology, CommandPanel
+from .first_setup import FirstSetupPage
+from . import __version__
+from .workspace_config import config_path, infer_workspace, write_workspace_config, last_workspace_project
+from .setup_core import load_state
 
 
 STYLE = '''
@@ -96,6 +98,12 @@ def fill_table(t, rows):
 
 
 class MainWindow(QMainWindow):
+    PAGE_OVERVIEW = 0
+    PAGE_FIRST_SETUP = 1
+    PAGE_CONFIG = 2
+    PAGE_CONTROL = 3
+    PAGE_OUTPUT = 4
+
     def __init__(self, project=None):
         super().__init__()
         self.project = project or Project.demo()
@@ -105,13 +113,9 @@ class MainWindow(QMainWindow):
         self.panels = {}
         self.bridge = Bridge()
         self.selection = (0, -1)
-        self.process = QProcess(self)
-        self.process.setProcessChannelMode(QProcess.MergedChannels)
-        self.process.readyReadStandardOutput.connect(self.read_process)
-        self.process.finished.connect(self.master_finished)
-        self.process.errorOccurred.connect(lambda e: self.append_log('主站进程: ' + self.process.errorString()))
+        self.config_build_active = False
+        self.last_config_write = None
         self.log_seen = None
-        self.last_graph = None
         self.setWindowTitle('Ecat GroundStation · EtherCAT 配置与调试')
         self.resize(1500, 920)
         self.setMinimumSize(1080, 700)
@@ -167,7 +171,7 @@ class MainWindow(QMainWindow):
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
         self.nav = QListWidget()
-        self.nav.addItems(['◫   工作台总览', '⚙   从站与任务', '⇄   端口与资源', '◎   执行器调试', '⌁   ROS 2 与主站', '≡   配置与日志'])
+        self.nav.addItems(['◫   工作台总览', '◇   首次配置', '⚙   从站与任务', '◎   执行器调试', '≡   配置与日志'])
         self.nav.setFixedWidth(175)
         self.nav.setCurrentRow(0)
         self.pages = QStackedWidget()
@@ -176,10 +180,13 @@ class MainWindow(QMainWindow):
         body.addWidget(self.pages, 1)
         outer.addLayout(body, 1)
         self.build_overview()
+        self.first_setup = FirstSetupPage(self, allow_action=self.first_setup_allowed, project=self.project)
+        self.first_setup.configured.connect(self.adopt_first_setup)
+        self.first_setup.workspace_built.connect(self.workspace_build_finished)
+        self.first_setup.jobs.output.connect(self.setup_job_output)
+        self.pages.addWidget(self.first_setup)
         self.build_config()
-        self.build_resources()
         self.build_control()
-        self.build_connection()
         self.build_output()
         self.statusBar().showMessage('离线编辑 · 配置尚未应用至硬件')
 
@@ -244,10 +251,19 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(button('导出 YAML', self.export))
         toolbar.addStretch()
         l.addWidget(self.config_toolbar)
-        self.edit_notice = QLabel('配置仅在主站启动时载入；完成校验后，在「ROS 2 与主站」页导出当前配置并启动主站。')
+        self.edit_notice = QLabel('应用任务修改会校验并写入当前工作空间的 config.yaml；再点击 colcon build 编译。主站需重新运行后加载新配置。')
         self.edit_notice.setObjectName('muted')
         self.edit_notice.setWordWrap(True)
         l.addWidget(self.edit_notice)
+        binding = QHBoxLayout()
+        binding.addWidget(QLabel('当前工作空间'))
+        self.config_workspace = QLineEdit(self.project.workspace)
+        self.config_workspace.setReadOnly(True)
+        self.config_workspace.setPlaceholderText('从首次配置进入，或选择已有 soem_bringup 的工作空间')
+        binding.addWidget(self.config_workspace, 1)
+        self.choose_config_workspace_btn = button('选择工作空间…', self.choose_config_workspace)
+        binding.addWidget(self.choose_config_workspace_btn)
+        l.addLayout(binding)
         self.config_split = QSplitter()
         self.tree = QTreeWidget()
         self.tree.setHeaderLabel('项目设备')
@@ -301,19 +317,43 @@ class MainWindow(QMainWindow):
         self.form_scroll.setWidgetResizable(True)
         rl.addWidget(self.form_scroll, 1)
         rl.addWidget(button('应用任务修改', self.apply_task, 'primary'))
+        self.config_build_btn = button('colcon build（普通用户）', self.build_task_workspace)
+        rl.addWidget(self.config_build_btn)
         self.config_split.addWidget(right)
         self.config_split.setSizes([220, 470, 420])
         l.addWidget(self.config_split, 1)
-
-    def build_resources(self):
-        l = self.page('端口与资源', '检查每个从站的 CAN ID、TIM、UART、DBUS 与 I²C 分配；相同端口的独占任务会阻止导出。')
-        self.resource_table = table(['从站', '任务', '端口 / 总线', '资源 / 标识', '占用方式'])
-        l.addWidget(self.resource_table, 1)
-        l.addWidget(QLabel('CAN 允许共享总线，帧 ID 必须避免冲突。板级 UART 复用、电气接线及波特率还需按硬件手册核对。'))
-        l.addWidget(button('重新校验', self.validate))
+        self.config_apply_status = QLabel('尚未应用。先配置任务，再应用到当前工作空间。')
+        self.config_apply_status.setObjectName('notice')
+        self.config_apply_status.setWordWrap(True)
+        self.config_apply_status.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        l.addWidget(self.config_apply_status)
+        self.config_build_progress = QProgressBar()
+        self.config_build_progress.setRange(0, 1)
+        self.config_build_progress.hide()
+        build_status_row = QHBoxLayout()
+        build_status_row.addWidget(self.config_build_progress, 1)
+        self.config_cancel_btn = button('取消编译', self.first_setup.jobs.cancel)
+        self.config_cancel_btn.setEnabled(False)
+        build_status_row.addWidget(self.config_cancel_btn)
+        l.addLayout(build_status_row)
+        self.config_build_log = QPlainTextEdit()
+        self.config_build_log.setReadOnly(True)
+        self.config_build_log.setMaximumBlockCount(3000)
+        self.config_build_log.setMaximumHeight(130)
+        self.config_build_log.hide()
+        l.addWidget(self.config_build_log)
 
     def build_control(self):
         l = self.page('执行器与传感器调试', '双击任务打开独立窗口，可分别查看反馈、编辑目标值、绘制曲线并导出 CSV。')
+        domain = QHBoxLayout()
+        domain.addWidget(QLabel('ROS_DOMAIN_ID'))
+        self.domain_edit = QSpinBox()
+        self.domain_edit.setRange(0, 232)
+        self.domain_edit.setValue(self.project.ros_domain)
+        self.domain_edit.valueChanged.connect(self.set_ros_domain)
+        domain.addWidget(self.domain_edit)
+        domain.addStretch()
+        l.addLayout(domain)
         self.control_table = table(['任务', '设备', '端口', '命令消息', '反馈状态', '接收 / 发送'])
         self.control_table.cellDoubleClicked.connect(lambda row, col: self.open_panel(row))
         l.addWidget(self.control_table, 1)
@@ -327,48 +367,6 @@ class MainWindow(QMainWindow):
         tip.setWordWrap(True)
         tip.setObjectName('notice')
         l.addWidget(tip)
-
-    def build_connection(self):
-        l = self.page('ROS 2 与主站', '上位机作为 ROS 2 节点连接原主站；EtherCAT 实时循环继续由 soem_backend 执行。')
-        self.connection_settings = QWidget()
-        form = QFormLayout(self.connection_settings)
-        self.workspace_edit = QLineEdit(self.project.workspace)
-        self.interface_edit = QComboBox()
-        self.interface_edit.setEditable(True)
-        self.interface_edit.addItems(sorted(p.name for p in Path('/sys/class/net').iterdir()))
-        self.interface_edit.setCurrentText(self.project.interface)
-        self.domain_edit = QSpinBox()
-        self.domain_edit.setRange(0, 232)
-        self.domain_edit.setValue(self.project.ros_domain)
-        self.cpu_edit = QSpinBox()
-        self.cpu_edit.setRange(0, 4095)
-        self.cpu_edit.setValue(self.project.rt_cpu)
-        self.non_rt_edit = QLineEdit(self.project.non_rt_cpus)
-        form.addRow('ROS 工作空间', self.workspace_edit)
-        form.addRow('EtherCAT 网卡', self.interface_edit)
-        form.addRow('ROS_DOMAIN_ID', self.domain_edit)
-        form.addRow('实时 CPU', self.cpu_edit)
-        form.addRow('非实时 CPU', self.non_rt_edit)
-        l.addWidget(self.connection_settings)
-        l.addWidget(button('保存连接设置', self.apply_connection))
-        row = QHBoxLayout()
-        self.start_master_btn = button('导出当前配置并启动主站', self.start_master, 'primary')
-        row.addWidget(self.start_master_btn)
-        row.addWidget(button('停止本软件启动的主站', self.stop_master))
-        row.addWidget(button('刷新 ROS 图', self.refresh_graph))
-        row.addStretch()
-        l.addLayout(row)
-        self.master_status = QLabel('主站未由本软件启动。连接现有主站无需再次启动。')
-        self.master_status.setWordWrap(True)
-        self.master_status.setObjectName('notice')
-        l.addWidget(self.master_status)
-        self.graph_table = table(['ROS 2 话题', '消息类型'])
-        l.addWidget(self.graph_table, 1)
-        note = QLabel('主站启动需要正确的网卡、实时权限及原仓库的构建产物。若权限不足，请按原仓库环境文档配置。\n'
-                      '本软件不自动提升权限。ROS 话题发现不等于 EtherCAT 总线扫描或 OP 状态确认。')
-        note.setObjectName('muted')
-        note.setWordWrap(True)
-        l.addWidget(note)
 
     def build_output(self):
         l = self.page('配置与日志', '查看主站实际使用的带类型标签 YAML，并检查校验结果和运行日志。')
@@ -395,6 +393,7 @@ class MainWindow(QMainWindow):
         l.addWidget(tabs, 1)
 
     def refresh(self):
+        self.config_workspace.setText(self.project.workspace)
         si, ti = self.selection
         self.tree.blockSignals(True)
         self.tree.clear()
@@ -433,7 +432,6 @@ class MainWindow(QMainWindow):
         self.topology.project = self.project
         self.topology.update()
         rows = []
-        rr = []
         cr = []
         self.control_keys = []
         for s in self.project.slaves:
@@ -441,16 +439,13 @@ class MainWindow(QMainWindow):
             rc, wc = s.capacity
             rows.append([s.sn, 'Large PDO' if s.model == 'large' else '标准版', len(s.tasks), f'{r} / {rc} B', f'{w} / {wc} B', f'{s.sdo_length()} B'])
             for i, t in enumerate(s.tasks, 1):
-                for port, identity, exclusive in resources(t):
-                    rr.append([s.sn, f'app_{i} · {SPECS[t.type_id].name}', port, identity, '独占' if exclusive else '共享总线 / ID 唯一'])
                 key = f'sn{s.sn}/app_{i}'
                 self.control_keys.append(key)
                 cr.append([key, SPECS[t.type_id].name, ', '.join(dict.fromkeys(r[0] for r in resources(t))),
                            message_types(t)[1].rsplit('/', 1)[-1] or '仅反馈', '未连接', '0 / 0'])
         fill_table(self.overview_table, rows)
-        fill_table(self.resource_table, rr)
         fill_table(self.control_table, cr)
-        self.setWindowTitle(('● ' if self.dirty else '') + 'Ecat GroundStation · ' + (Path(self.project_path).name if self.project_path else '未保存项目'))
+        self.setWindowTitle(('● ' if self.dirty else '') + f'Ecat GroundStation v{__version__} · ' + (Path(self.project_path).name if self.project_path else '未保存项目'))
 
     def load_selection(self):
         si, ti = self.selection
@@ -561,21 +556,154 @@ class MainWindow(QMainWindow):
             if previous != self.pending_task:
                 self.project.slaves[si].tasks[ti] = copy.deepcopy(self.pending_task)
                 self.dirty = True
+                self.mark_config_pending()
 
     def update_dynamic_fields(self):
         self.gather_task()
         QTimer.singleShot(0, self.render_task_editor)
 
     def editable(self):
-        if self.bridge.mode not in ('disconnected', 'error') or self.process.state() != QProcess.NotRunning:
-            QMessageBox.information(self, '配置锁定', '请先断开上位机连接，并停止本软件启动的主站，再修改配置。')
+        if hasattr(self, 'first_setup') and self.first_setup.busy:
+            QMessageBox.information(self, '首次配置正在执行', '请先等待首次配置任务完成或取消可中断的任务。')
+            return False
+        if self.bridge.mode not in ('disconnected', 'error'):
+            QMessageBox.information(self, '配置锁定', '请先断开上位机调试连接，再修改配置。')
             return False
         return True
+
+    def first_setup_allowed(self):
+        if self.bridge.mode not in ('disconnected', 'error'):
+            QMessageBox.information(self, '先停止设备调试', '执行首次配置或编译前请断开调试连接。')
+            return False
+        return True
+
+    def adopt_first_setup(self, project):
+        if not self.editable() or not self.discard_ok():
+            return
+        self.close_panels()
+        self.project = project
+        self.first_setup.project = project
+        self.project_path = None
+        self.dirty = True
+        self.selection = 0, 0
+        self.sync_project_fields()
+        self.refresh()
+        self.nav.setCurrentRow(self.PAGE_CONFIG)
+        self.append_log('已载入真实 SN 和当前工作空间。应用任务修改后会写入 config.yaml，再点击 colcon build。')
+        self.mark_config_pending()
 
     def changed(self):
         self.close_panels()
         self.dirty = True
+        self.mark_config_pending()
         self.refresh()
+
+    def mark_config_pending(self):
+        self.last_config_write = None
+        if hasattr(self, 'config_apply_status'):
+            self.config_apply_status.setText('工程已修改，尚未写入工作空间。请点击「应用任务修改」或 colcon build。')
+
+    def sync_project_fields(self):
+        self.config_workspace.setText(self.project.workspace)
+        self.domain_edit.setValue(self.project.ros_domain)
+        self.first_setup.project = self.project
+
+    def set_ros_domain(self, value):
+        if value != self.project.ros_domain:
+            self.project.ros_domain = value
+            self.dirty = True
+
+    def prepare_connection(self):
+        if not self.editable():
+            return False
+        self.commit_pending()
+        self.project.ros_domain = self.domain_edit.value()
+        return True
+
+    def choose_config_workspace(self):
+        if not self.editable():
+            return
+        path = QFileDialog.getExistingDirectory(self, '选择包含 src/soem_bringup 的工作空间', self.project.workspace or str(Path.home()))
+        if not path:
+            return
+        try:
+            config_path(path)
+        except ValueError as exc:
+            QMessageBox.warning(self, '工作空间', str(exc))
+            return
+        self.commit_pending()
+        self.project.workspace = str(Path(path).resolve())
+        self.first_setup.workspace_edit.setText(self.project.workspace)
+        self.first_setup.state['workspace'] = self.project.workspace
+        self.first_setup.persist()
+        self.changed()
+
+    def sync_task_config(self):
+        self.commit_pending()
+        if not self.project.workspace.strip():
+            self.config_apply_status.setText('任务已更新到工程。尚未关联工作空间，请先选择工作空间，再应用或编译。')
+            return None
+        try:
+            result = write_workspace_config(self.project)
+        except (ValueError, OSError, RuntimeError) as exc:
+            self.config_apply_status.setText('未能写入工作空间：' + str(exc))
+            self.append_log('配置未写入：' + str(exc))
+            QMessageBox.warning(self, '配置未写入', str(exc))
+            return None
+        self.last_config_write = result
+        if not self.project_path:
+            self.project_path = result['project_path']
+        if Path(self.project_path).resolve() == Path(result['project_path']).resolve():
+            self.dirty = False
+        self.first_setup.workspace_edit.setText(result['workspace'])
+        self.first_setup.state['workspace'] = result['workspace']
+        self.first_setup.persist()
+        self.refresh()
+        self.config_apply_status.setText(f"已写入：{result['config']}\n下一步：点击 colcon build（普通用户）更新安装配置。")
+        self.append_log('已写入主站配置：' + result['config'])
+        if result['backup']:
+            self.append_log('旧配置备份：' + result['backup'])
+        return result
+
+    def build_task_workspace(self):
+        if not self.editable():
+            return
+        result = self.sync_task_config()
+        if not result:
+            return
+        self.config_build_active = True
+        self.config_build_log.clear()
+        self.config_build_log.show()
+        self.config_build_progress.show()
+        self.config_build_progress.setRange(0, 0)
+        self.config_apply_status.setText('正在以普通用户编译：' + result['workspace'])
+        started = self.first_setup.build_workspace(workspace=result['workspace'], expected_hash=result['config_hash'], open_terminal=False)
+        if not started:
+            self.config_build_active = False
+            self.config_build_progress.setRange(0, 1)
+            self.config_apply_status.setText('配置已写入，编译尚未开始。请查看执行日志。')
+
+    def setup_job_output(self, text):
+        if self.config_build_active:
+            self.config_build_log.appendPlainText(text)
+            self.log_view.appendPlainText(text)
+
+    def workspace_build_finished(self, success, data):
+        if not self.config_build_active:
+            return
+        self.config_build_active = False
+        self.config_build_progress.setRange(0, 1)
+        self.config_build_progress.setValue(1 if success else 0)
+        matches = (success and self.last_config_write is not None and
+                   data.get('workspace') == self.last_config_write['workspace'] and
+                   data.get('config_hash') == self.last_config_write['config_hash'])
+        if matches:
+            self.config_apply_status.setText(f"编译成功，安装配置已更新并核对一致：{data['installed_config']}\n请重新运行主站加载新配置。")
+            self.append_log('colcon build 成功；源 config.yaml 与安装配置一致。')
+        else:
+            detail = data.get('message', '编译结果与当前配置不一致')
+            self.config_apply_status.setText('配置已写入，但尚未确认编译生效：' + detail)
+            self.append_log('编译未确认成功：' + detail)
 
     def add_slave(self):
         if not self.editable():
@@ -589,7 +717,7 @@ class MainWindow(QMainWindow):
             self.project.slaves.append(Slave(str(int(sn))))
             self.selection = len(self.project.slaves) - 1, -1
             self.changed()
-            self.nav.setCurrentRow(1)
+            self.nav.setCurrentRow(self.PAGE_CONFIG)
 
     def remove_slave(self):
         si, _ = self.selection
@@ -619,6 +747,7 @@ class MainWindow(QMainWindow):
         s.latency_topic = latency.replace(old_prefix, f'/ecat/sn{s.sn}/', 1) if latency.startswith(old_prefix) else latency
         s.model = self.model_edit.currentData()
         self.changed()
+        self.sync_task_config()
 
     def add_task(self):
         si, _ = self.selection
@@ -640,12 +769,13 @@ class MainWindow(QMainWindow):
 
     def apply_task(self):
         si, ti = self.selection
-        if not self.editable() or not self.pending_task or ti < 0:
+        if not self.editable():
             return
-        self.gather_task()
-        self.project.slaves[si].tasks[ti] = copy.deepcopy(self.pending_task)
+        if self.pending_task and si >= 0 and ti >= 0:
+            self.gather_task()
+            self.project.slaves[si].tasks[ti] = copy.deepcopy(self.pending_task)
         self.changed()
-        self.append_log('任务已更新；配置尚未应用至主站。')
+        return self.sync_task_config()
 
     def remove_task(self):
         si, ti = self.selection
@@ -681,7 +811,7 @@ class MainWindow(QMainWindow):
             self.project = Project(ros_domain=int(os.environ.get('ROS_DOMAIN_ID', '0')))
             self.project_path, self.dirty = None, False
             self.close_panels()
-            self.sync_connection_fields()
+            self.sync_project_fields()
             self.refresh()
 
     def open_file(self):
@@ -693,6 +823,7 @@ class MainWindow(QMainWindow):
         try:
             if path.lower().endswith(('.yaml', '.yml')):
                 p, warnings = Project.import_yaml(Path(path).read_text(encoding='utf-8'))
+                p.workspace = infer_workspace(path)
                 self.project_path, self.dirty = None, True
                 for warning in warnings:
                     self.append_log('导入提示: ' + warning)
@@ -704,9 +835,9 @@ class MainWindow(QMainWindow):
             self.project = p
             self.selection = 0, -1
             self.close_panels()
-            self.sync_connection_fields()
+            self.sync_project_fields()
             self.refresh()
-            self.nav.setCurrentRow(1)
+            self.nav.setCurrentRow(self.PAGE_CONFIG)
             self.append_log('已打开 ' + path)
         except Exception as exc:
             QMessageBox.warning(self, '导入失败', str(exc))
@@ -740,46 +871,29 @@ class MainWindow(QMainWindow):
                 return path
         except Exception as exc:
             QMessageBox.warning(self, '无法导出', str(exc))
-            self.nav.setCurrentRow(5)
+            self.nav.setCurrentRow(self.PAGE_OUTPUT)
         return None
 
     def validate(self):
         self.commit_pending()
         self.refresh()
-        self.nav.setCurrentRow(5)
+        self.nav.setCurrentRow(self.PAGE_OUTPUT)
         errors = self.project.validate()
         QMessageBox.information(self, '配置校验', '\n'.join(errors[:15]) if errors else '配置校验通过。主站启动前请核对模块型号与实际接线。')
 
     def show_output(self):
         self.commit_pending()
         self.refresh()
-        self.nav.setCurrentRow(5)
-
-    def sync_connection_fields(self):
-        self.workspace_edit.setText(self.project.workspace)
-        self.interface_edit.setCurrentText(self.project.interface)
-        self.domain_edit.setValue(self.project.ros_domain)
-        self.cpu_edit.setValue(self.project.rt_cpu)
-        self.non_rt_edit.setText(self.project.non_rt_cpus)
-
-    def apply_connection(self):
-        if not self.editable():
-            return False
-        self.commit_pending()
-        self.project.workspace = self.workspace_edit.text().strip()
-        self.project.interface = self.interface_edit.currentText().strip()
-        self.project.ros_domain = self.domain_edit.value()
-        self.project.rt_cpu = self.cpu_edit.value()
-        self.project.non_rt_cpus = self.non_rt_edit.text().strip()
-        self.changed()
-        return True
+        self.nav.setCurrentRow(self.PAGE_OUTPUT)
 
     def toggle_connection(self):
+        if self.first_setup.busy:
+            return
         if self.bridge.mode not in ('disconnected', 'error'):
             self.close_panels()
             self.bridge.disconnect()
             return
-        if self.process.state() == QProcess.NotRunning and not self.apply_connection():
+        if not self.prepare_connection():
             return
         errors = self.project.validate()
         if errors:
@@ -822,67 +936,6 @@ class MainWindow(QMainWindow):
             panel.close()
         self.panels.clear()
 
-    def refresh_graph(self):
-        with self.bridge.lock:
-            fill_table(self.graph_table, [(name, ', '.join(types)) for name, types in self.bridge.graph])
-
-    def start_master(self):
-        if self.process.state() != QProcess.NotRunning:
-            return
-        if self.bridge.mode not in ('disconnected', 'error'):
-            QMessageBox.information(self, '先断开连接', '请先断开上位机连接，启动主站后再选择 ROS 2 实机连接。')
-            return
-        if not self.apply_connection():
-            return
-        try:
-            self.project.export_yaml()
-        except ValueError as exc:
-            QMessageBox.warning(self, '配置错误', str(exc))
-            return
-        workspace = Path(self.project.workspace).expanduser().resolve()
-        executable = workspace / 'install/soem_wrapper/lib/soem_wrapper/soem_backend'
-        if not executable.is_file() or not (workspace / 'install/setup.bash').is_file():
-            QMessageBox.warning(self, '主站未构建', f'未找到 {executable}\n请先按 EcatV2_Master 文档完成 colcon build。')
-            return
-        # A concrete snapshot is the exact file passed to the backend.
-        snapshot = Path.home() / '.local/share/ecat-groundstation/runs' / (time.strftime('%Y%m%d_%H%M%S') + f'_{time.time_ns() % 1000000}') / 'config.yaml'
-        atomic_write(snapshot, self.project.export_yaml())
-        args = [str(executable), '--ros-args', '-p', f'interface:={self.project.interface}', '-p',
-                f'config_file:={snapshot}', '-p', f'rt_cpu:={self.project.rt_cpu}', '-p', f'non_rt_cpus:={self.project.non_rt_cpus}']
-        env = QProcessEnvironment.systemEnvironment()
-        env.insert('ROS_DOMAIN_ID', str(self.project.ros_domain))
-        self.process.setProcessEnvironment(env)
-        self.process.start('/bin/bash', ['-c', 'source "$1/install/setup.bash" && shift && exec "$@"',
-                                         'ecat-master-launch', str(workspace), *args])
-        self.master_status.setText(f'正在启动主站 · 配置快照 {snapshot}\n启动成功请依据主站日志确认所有从站进入 OP。')
-        self.append_log('启动主站: ' + shlex.join(args))
-        self.nav.setCurrentRow(5)
-
-    def stop_master(self):
-        self.emergency()
-        if self.process.state() != QProcess.NotRunning:
-            pid = self.process.processId()
-            try:
-                os.kill(pid, signal.SIGINT)
-            except ProcessLookupError:
-                return
-            self.append_log('已请求本软件启动的主站退出（SIGINT）')
-            QTimer.singleShot(5000, self.terminate_master)
-
-    def terminate_master(self):
-        if self.process.state() != QProcess.NotRunning:
-            self.process.terminate()
-            self.append_log('主站未响应 SIGINT，已发送 SIGTERM')
-
-    def master_finished(self, exit_code, exit_status):
-        self.master_status.setText(f'本软件启动的主站已退出 · 代码 {exit_code}')
-        self.append_log(f'主站进程退出，代码 {exit_code}')
-        self.bridge.stop_all('主站已退出，输出锁定')
-
-    def read_process(self):
-        data = bytes(self.process.readAllStandardOutput()).decode('utf-8', errors='replace')
-        self.log_view.appendPlainText(data.rstrip())
-
     def append_log(self, text):
         self.log_view.appendPlainText(f'[{time.strftime("%H:%M:%S")}] {text}')
 
@@ -899,9 +952,14 @@ class MainWindow(QMainWindow):
         connected = mode not in ('disconnected', 'error')
         self.mode_combo.setEnabled(not connected)
         self.connect_btn.setText('断开' if connected else '连接')
-        self.config_split.setEnabled(not connected and self.process.state() == QProcess.NotRunning)
-        self.config_toolbar.setEnabled(not connected and self.process.state() == QProcess.NotRunning)
-        self.connection_settings.setEnabled(not connected and self.process.state() == QProcess.NotRunning)
+        self.connect_btn.setEnabled(not self.first_setup.busy)
+        self.first_setup.project = self.project
+        self.config_split.setEnabled(not connected and not self.first_setup.busy)
+        self.config_toolbar.setEnabled(not connected and not self.first_setup.busy)
+        self.choose_config_workspace_btn.setEnabled(not connected and not self.first_setup.busy)
+        self.config_build_btn.setEnabled(not connected and not self.first_setup.busy and bool(self.project.workspace.strip()))
+        self.domain_edit.setEnabled(not connected and not self.first_setup.busy)
+        self.config_cancel_btn.setEnabled(self.config_build_active and self.first_setup.busy)
         modes = {'disconnected': '离线编辑 · 配置尚未应用至硬件', 'demo': '离线演示 · 所有数据均为模拟值',
                  'connecting': '正在初始化 ROS 2…', 'ros': f'ROS 2 已连接 · Domain {self.project.ros_domain} · 以反馈确认设备在线',
                  'error': '连接错误 · ' + self.bridge.error}
@@ -923,7 +981,6 @@ class MainWindow(QMainWindow):
                 self.control_table.item(row, 4).setText('未连接')
         with self.bridge.lock:
             logs = list(self.bridge.logs)
-            graph = list(self.bridge.graph)
         if logs:
             if self.log_seen in logs:
                 logs = logs[logs.index(self.log_seen) + 1:]
@@ -931,24 +988,21 @@ class MainWindow(QMainWindow):
                 self.log_view.appendPlainText(f'[{stamp}] {text}')
             if logs:
                 self.log_seen = logs[-1]
-        if graph != self.last_graph:
-            self.refresh_graph()
-            self.last_graph = graph
 
     def closeEvent(self, event):
+        if self.first_setup.busy:
+            QMessageBox.information(self, '后台任务正在执行', '请等待后台任务完成；编译可点击「取消编译」，烧录及系统修改需要等待结束。')
+            event.ignore()
+            return
         if not self.discard_ok():
             event.ignore()
             return
         self.close_panels()
         self.bridge.disconnect()
-        if self.process.state() != QProcess.NotRunning:
-            self.stop_master()
-            if not self.process.waitForFinished(2500):
-                self.process.terminate()
-                if not self.process.waitForFinished(1500):
-                    self.process.kill()
-                    self.process.waitForFinished(1000)
         self.timer.stop()
+        self.first_setup.timer.stop()
+        for dialog in list(self.first_setup.dialogs):
+            dialog.close()
         event.accept()
 
 
@@ -957,6 +1011,7 @@ def main(argv=None):
     parser.add_argument('--project', help='GroundStation JSON 工程')
     parser.add_argument('--config', help='导入 EcatV2_Master YAML')
     parser.add_argument('--screenshot', help='离屏 UI 截图路径（不连接 ROS、不发送命令）')
+    parser.add_argument('--first-setup', action='store_true', help='打开首次配置模块（不自动执行系统修改或烧录）')
     args = parser.parse_args(argv)
     app = QApplication([sys.argv[0]])
     app.setApplicationName('Ecat GroundStation')
@@ -965,17 +1020,30 @@ def main(argv=None):
     app.setStyle('Fusion')
     app.setStyleSheet(STYLE)
     project = None
+    restored_snapshot = None
     if args.project:
         project = load_project(args.project)
     elif args.config:
         project, warnings = Project.import_yaml(Path(args.config).read_text(encoding='utf-8'))
+        project.workspace = infer_workspace(args.config)
         for warning in warnings:
             print(warning)
+    else:
+        state = load_state(Path.home() / '.local/share/ecat-groundstation/first-setup.json')
+        snapshot = last_workspace_project(state)
+        if snapshot:
+            try:
+                project = load_project(snapshot)
+                restored_snapshot = snapshot
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                print(f'上次工程未能恢复：{exc}')
     window = MainWindow(project)
-    if args.project:
-        window.project_path = str(Path(args.project).resolve())
+    if args.project or restored_snapshot:
+        window.project_path = str(Path(args.project or restored_snapshot).resolve())
         window.refresh()
     window.show()
+    if args.first_setup:
+        window.nav.setCurrentRow(window.PAGE_FIRST_SETUP)
     if args.screenshot:
         def capture():
             window.grab().save(args.screenshot)

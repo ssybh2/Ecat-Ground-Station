@@ -1,0 +1,59 @@
+[INFO] [launch]: All log files can be found below /home/hby/EGC_test/.ecat-groundstation/ros-logs/2026-11-12-15-21-17-874270-hby-ROG-Strix-G18-G815LR-G815LR-469447
+[INFO] [launch]: Default logging verbosity is set to INFO
+[INFO] [soem_backend-1]: process started with pid [469469]
+[soem_backend-1] [INFO] [1794468077.963619522] [Ecat_SYS]: Current version: 7c1bd8a
+[soem_backend-1] [INFO] [1794468077.963950711] [Ecat_SYS]: Using interface: enp5s0f0
+[soem_backend-1] [INFO] [1794468077.963999880] [Ecat_SYS]: Using rt-cpu: 6
+[soem_backend-1] [INFO] [1794468077.964041505] [Ecat_SYS]: Using non_rt_cpus: 0-5
+[soem_backend-1] [INFO] [1794468077.964087461] [Ecat_CFG]: Using config_file: /home/hby/EGC_test/install/soem_bringup/share/soem_bringup/config/config.yaml
+[soem_backend-1] [INFO] [1794468077.964934781] [Ecat_CFG]: Configuration file loaded
+[soem_backend-1] [INFO] [1794468077.964975428] [Ecat_WRAPPER]: Registered new device, vendor=0x00000000, product=0x00000003, name=H750UniversalModule
+[soem_backend-1] [INFO] [1794468077.964992470] [Ecat_WRAPPER]: Registered new device, vendor=0x00000000, product=0x00000004, name=H750UniversalModule (Large PDO V.)
+[soem_backend-1] [INFO] [1794468077.965005740] [Ecat_WRAPPER]: Registered new device, vendor=0x00000ffb, product=0x00000001, name=SBT908E
+[soem_backend-1] [INFO] [1794468077.981158585] [Ecat_SYS]: ec_init on enp5s0f0 succeeded.
+[soem_backend-1] [INFO] [1794468078.008617123] [Ecat_CFG]: 1 slaves found
+[soem_backend-1] [INFO] [1794468078.008686196] [Ecat_CFG]: Slave id=1 matched device H750UniversalModule (Large PDO V.), vendor=0x00000000, product=0x00000004
+[soem_backend-1] [INFO] [1794468078.011110471] [Ecat_CFG]: all slaves backed to init, restarting mapping
+[soem_backend-1] [INFO] [1794468078.038222734] [Ecat_CFG]: detected 1 slaves
+[soem_backend-1] [INFO] [1794468078.040668171] [Ecat_CFG]: Found slave id=1, sn=2818120, eepid=4, type=H750UniversalModule (Large PDO V.), swrev=8
+[soem_backend-1] [INFO] [1794468078.041313508] [Ecat_CFG]: SDO configured for slave id=1, sn=2818120, eepid=4, type=H750UniversalModule (Large PDO V.), sdolen=21
+[soem_backend-1] [INFO] [1794468078.075580353] [Ecat_CFG]: Slaves mapped, state to SAFE_OP.
+[soem_backend-1] [INFO] [1794468078.075697618] [Ecat_CFG]: All slaves reached SAFE_OP, state to OP
+[soem_backend-1] [INFO] [1794468078.075710468] [Ecat_CFG]: Calculated expected wkc = 3
+[soem_backend-1] [INFO] [1794468078.075905327] [Ecat_CFG]: Operational state reached for all slaves.
+[soem_backend-1] [INFO] [1794468078.076011765] [Ecat_SYS]: SDO worker started
+[soem_backend-1] [INFO] [1794468078.076150890] [Ecat_SYS]: Initialization succeeded
+[soem_backend-1] [INFO] [1794468078.076165068] [Ecat_SYS]: Thread priority set to 49 with SCHED_FIFO
+[soem_backend-1] [WARN] [1794468078.235039119] [Ecat_SYS]: Failed to move thread 49 to cpu 0-5
+[soem_backend-1] [WARN] [1794468078.258595811] [Ecat_SYS]: Failed to move thread 50 to cpu 0-5
+[soem_backend-1] [WARN] [1794468078.281702584] [Ecat_SYS]: Failed to move thread 51 to cpu 0-5
+[soem_backend-1] [WARN] [1794468078.305966633] [Ecat_SYS]: Failed to move thread 52 to cpu 0-5
+[soem_backend-1] [WARN] [1794468078.329599942] [Ecat_SYS]: Failed to move thread 53 to cpu 0-5
+[soem_backend-1] [WARN] [1794468078.352975884] [Ecat_SYS]: Failed to move thread 54 to cpu 0-5
+[soem_backend-1] [WARN] [1794468078.376098790] [Ecat_SYS]: Failed to move thread 55 to cpu 0-5
+[soem_backend-1] [WARN] [1794468078.399293633] [Ecat_SYS]: Failed to move thread 56 to cpu 0-5
+[soem_backend-1] [WARN] [1794468078.422500139] [Ecat_SYS]: Failed to move thread 127 to cpu 0-5
+[soem_backend-1] [WARN] [1794468078.446273481] [Ecat_SYS]: Failed to move thread 144 to cpu 0-5
+[soem_backend-1] [WARN] [1794468078.494445736] [Ecat_SYS]: Failed to move thread 469484 to cpu 0-5
+[soem_backend-1] [WARN] [1794468078.518616616] [Ecat_SYS]: Failed to move thread 469485 to cpu 0-5
+[soem_backend-1] [INFO] [1794468078.518671512] [Ecat_SYS]: move threads finished
+[soem_backend-1] [INFO] [1794468078.519181496] [Ecat_SYS]: bind irq finished
+[soem_backend-1] [INFO] [1794468078.519437885] [Ecat_SYS]: NIC enp5s0f0 low-latency params setup done
+[soem_backend-1] [INFO] [1794468078.519453040] [Ecat_SYS]: setup nic finished
+[soem_backend-1] [INFO] [1794468078.524836228] [Ecat_DATA]: Slave id=1 sdo all sent
+[soem_backend-1] [INFO] [1794468078.524892520] [Ecat_DATA]: Slave id=1 sdo confirmed received
+[soem_backend-1] [INFO] [1794468078.526679979] [Ecat_DATA]: Slave id=1 confirmed ready
+[soem_backend-1] [INFO] [1794468078.526927428] [Ecat_DATA]: ========== All 1 slave(s) ready, system started ==========
+[WARNING] [launch]: user interrupted with ctrl-c (SIGINT)
+[INFO] [soem_backend-1]: sending signal 'SIGINT' to process[soem_backend-1]
+[soem_backend-1] [INFO] [1794468085.872134919] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[soem_backend-1] [INFO] [1794468085.872423924] [Ecat_SYS]: Shutting down
+[soem_backend-1] [INFO] [1794468085.872523797] [Ecat_DATA]: Exit reset command sent to all slaves
+[soem_backend-1] [INFO] [1794468085.982634246] [Ecat_DATA]: Stop data cycle
+[soem_backend-1] [INFO] [1794468085.983476397] [Ecat_DATA]: DATA thread exiting...
+[soem_backend-1] [INFO] [1794468085.983685922] [Ecat_SYS]: SDO worker stopped, 0 pending job(s) dropped
+[soem_backend-1] [INFO] [1794468085.983781535] [Ecat_SYS]: Init state for all slaves requested
+[soem_backend-1] [INFO] [1794468086.000088661] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[INFO] [soem_backend-1]: process has finished cleanly [pid 469469]
+
+Launch process return code: 0

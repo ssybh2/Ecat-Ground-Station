@@ -54,6 +54,6 @@
   "rt_cpu": 6,
   "non_rt_cpus": "0-5,7-15",
   "ros_domain": 24,
-  "workspace": "/home/hby/Rolling_ZLT",
+  "workspace": "",
   "format": "ecat-groundstation/v1"
 }

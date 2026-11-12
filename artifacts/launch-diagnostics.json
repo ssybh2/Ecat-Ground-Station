@@ -1,0 +1,16 @@
+{
+  "default": {
+    "returncode": 0,
+    "output": "before_init\nbefore_node\nnode_created\nshutdown_ok\n",
+    "seconds": 0.5573962559865322
+  },
+  "udp": {
+    "returncode": 0,
+    "output": "before_init\nbefore_node\nnode_created\nshutdown_ok\n",
+    "seconds": 0.570680064993212
+  },
+  "previous_logs": {
+    "soem_backend_465486_1794467351971.log": "[INFO] [1794467351.988813891] [Ecat_SYS]: Current version: 7c1bd8a\n[INFO] [1794467351.988919422] [Ecat_SYS]: Using interface: enp5s0f0\n[INFO] [1794467351.988952107] [Ecat_SYS]: Using rt-cpu: 6\n[INFO] [1794467351.988988914] [Ecat_SYS]: Using non_rt_cpus: 0-5\n[INFO] [1794467351.989022019] [Ecat_CFG]: Using config_file: /home/hby/EGC_test/install/soem_bringup/share/soem_bringup/config/config.yaml\n[INFO] [1794467351.989404819] [Ecat_CFG]: Configuration file loaded\n[INFO] [1794467351.989418508] [Ecat_WRAPPER]: Registered new device, vendor=0x00000000, product=0x00000003, name=H750UniversalModule\n[INFO] [1794467351.989433174] [Ecat_WRAPPER]: Registered new device, vendor=0x00000000, product=0x00000004, name=H750UniversalModule (Large PDO V.)\n[INFO] [1794467351.989444070] [Ecat_WRAPPER]: Registered new device, vendor=0x00000ffb, product=0x00000001, name=SBT908E\n[INFO] [1794467352.004967979] [Ecat_SYS]: ec_init on enp5s0f0 succeeded.\n[INFO] [1794467352.033770540] [Ecat_CFG]: 1 slaves found\n[INFO] [1794467352.033858121] [Ecat_CFG]: Slave id=1 matched device H750UniversalModule (Large PDO V.), vendor=0x00000000, product=0x00000004\n[INFO] [1794467352.036566148] [Ecat_CFG]: all slaves backed to init, restarting mapping\n[INFO] [1794467352.066345788] [Ecat_CFG]: detected 1 slaves\n[INFO] [1794467352.068250012] [Ecat_CFG]: Found slave id=1, sn=2818120, eepid=4, type=H750UniversalModule (Large PDO V.), swrev=8\n[ERROR] [1794467352.073438663] [Ecat_CFG]: Slave id=1 (H750UniversalModule (Large PDO V.)) setup failed with exception: get Key not found: sn2818120_sdo_len\n[ERROR] [1794467352.073556556] [Ecat_CFG]: Slave id=1 (H750UniversalModule (Large PDO V.)) setup failed\n[ERROR] [1794467352.080779126] [Ecat_SYS]: Initialization failed\n",
+    "soem_backend_465878_1794467406654.log": "[INFO] [1794467433.774241142] [rclcpp]: signal_handler(SIGINT/SIGTERM)\n"
+  }
+}

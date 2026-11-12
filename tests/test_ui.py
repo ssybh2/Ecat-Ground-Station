@@ -20,7 +20,7 @@ def test_task_editor_mode_switch_save_and_demo_panel(app, tmp_path):
     window = MainWindow(Project.demo())
     window.show()
     try:
-        window.nav.setCurrentRow(1)
+        window.nav.setCurrentRow(window.PAGE_CONFIG)
         window.tree.setCurrentItem(window.tree.topLevelItem(0).child(0))
         mode_editor = window.field_editors['sdowrite_control_type'][1]
         mode_editor.setCurrentIndex(2)

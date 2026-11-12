@@ -127,7 +127,7 @@ class Project:
     rt_cpu: int = 6
     non_rt_cpus: str = "0-5,7-15"
     ros_domain: int = 24
-    workspace: str = "/home/hby/Rolling_ZLT"
+    workspace: str = ""
 
     @classmethod
     def demo(cls):
