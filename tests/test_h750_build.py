@@ -45,11 +45,24 @@ def args_for(repo, tmp_path):
                      build_target='custom_h750', toolchain_bin='', toolchain_file='')
 
 
-def test_real_arm_cmake_build_produces_elf_bin_hex_and_keeps_source(firmware_source, tmp_path):
+@pytest.mark.parametrize('mode', ['Release', 'Debug'])
+def test_real_arm_cmake_build_produces_elf_bin_hex_and_keeps_source(firmware_source, tmp_path, mode):
     if not all(shutil.which(tool) for tool in ('arm-none-eabi-gcc', 'arm-none-eabi-objcopy', 'cmake', 'make')):
         pytest.skip('ARM GCC / CMake not installed')
+    if mode == 'Debug':
+        # Reproduce the upstream toolchain's unconditional -O0 and a child HAL target.
+        with (firmware_source / 'cmake/gcc-arm-none-eabi.cmake').open('a') as out:
+            out.write('set(CMAKE_C_FLAGS_DEBUG "-O0 -g3")\n')
+        child = firmware_source / 'child'
+        child.mkdir()
+        (child / 'child.c').write_text('int child(void) { return 42; }\n')
+        (child / 'CMakeLists.txt').write_text('add_library(child OBJECT child.c)\n')
+        with (firmware_source / 'CMakeLists.txt').open('a') as out:
+            out.write('add_subdirectory(child)\ntarget_link_libraries(custom_h750 PRIVATE child)\n')
     before = {str(p.relative_to(firmware_source)): p.read_bytes() for p in firmware_source.rglob('*') if p.is_file()}
-    result = worker.compile_h750(args_for(firmware_source, tmp_path))
+    args = args_for(firmware_source, tmp_path)
+    args.build_type = mode
+    result = worker.compile_h750(args)
     assert flash_ranges(result['image'])[0][0] == 0x08000000
     assert Path(result['bin']).stat().st_size > 0 and ':00000001FF' in Path(result['hex']).read_text()
     assert sha256_file(result['image']) == result['sha256']
@@ -57,6 +70,12 @@ def test_real_arm_cmake_build_produces_elf_bin_hex_and_keeps_source(firmware_sou
     assert before == {str(p.relative_to(firmware_source)): p.read_bytes() for p in firmware_source.rglob('*') if p.is_file()}
     manifest = Path(result['source']).parent / 'manifest.json'
     assert json.loads(manifest.read_text())['sha256'] == result['sha256']
+    if mode == 'Debug':
+        build = Path(result['image']).parent
+        for relative in ('CMakeFiles/custom_h750.dir/flags.make', 'child/CMakeFiles/child.dir/flags.make'):
+            flags = (build / relative).read_text()
+            assert flags.rfind('-Os') > flags.rfind('-O0') and '-g3' in flags
+        assert result['snapshot_adaptations'][0]['file'] == 'CMakeLists.txt'
 
 
 def test_output_in_source_and_non_h750_source_are_rejected(firmware_source, tmp_path):

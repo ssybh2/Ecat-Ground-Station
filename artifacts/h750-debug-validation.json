@@ -1,0 +1,31 @@
+{
+  "validation": "actual user H750 Debug build with compact debugging and callback fixes",
+  "source_commit": "83ee21cef2f3c7970757c178eeeb1fc6d9655819",
+  "build_type": "Debug",
+  "image_sha256": "264357ffa6da74f99134cca036bf1e576e6eceb0888b08c023b6229cd12f6e0e",
+  "flash_bytes": 96200,
+  "flash_limit_bytes": 131072,
+  "debug_symbols": true,
+  "generated": [
+    "elf",
+    "bin",
+    "hex"
+  ],
+  "original_source_unchanged": true,
+  "snapshot_adaptations": [
+    {
+      "file": "CMakeLists.txt",
+      "reason": "Debug 保留 -g3，采用 -Os 以适配 H750 128 KiB Flash",
+      "before": "a5b065b2ca743acf023f1e49ea8f229a0f593996d03ff4e2b7c54985e7c5bd71",
+      "after": "3842eb8a2135cb6ae30fe5ba12194fbbf7fd63a1268f707ab0ac8914ef14f355"
+    },
+    {
+      "file": "Application/task_defs.hpp",
+      "reason": "修复已知上游无定义的基类回调，将接口声明为纯虚函数",
+      "before": "5d172f21167dbe121863da482307c29ca5cc63851a6e34dfef14f7e2e0a25c33",
+      "after": "a41baafb958f7b9c1f3c9a0c08bb4a1b1431476ae0df4659623204c74886e760"
+    }
+  ],
+  "new_large_download": false,
+  "hardware_flashed": false
+}

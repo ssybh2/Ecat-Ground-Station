@@ -32,6 +32,7 @@ from ecat_groundstation.setup_core import (
 )
 from ecat_groundstation.eeprom_support import build_eeprom_tool, verified_eeprom_tool
 from ecat_groundstation.h750_runtime import prepare_h750_runtime
+from ecat_groundstation.h750_snapshot import prepare_h750_snapshot
 
 
 RESULT_PREFIX = '@@ECAT_RESULT@@'
@@ -695,6 +696,9 @@ def compile_h750(args):
     source = variant / 'source'
     shutil.copytree(repo, source, ignore=shutil.ignore_patterns('.git', '.idea', '__pycache__', 'build', 'build-*',
                                                              'cmake-build-*', '*.elf', '*.bin', '*.hex', '*.zip'))
+    adaptations = prepare_h750_snapshot(source, build_type)
+    for change in adaptations:
+        print('编译快照适配：' + change['reason'] + '；原始源码不变。', flush=True)
     selected_toolchain = source / toolchain.relative_to(repo) if toolchain.is_relative_to(repo) else toolchain
     build = variant / 'build' / build_type
     run([cmake, '-S', source, '-B', build, '-G', 'Unix Makefiles', '-DCMAKE_BUILD_TYPE=' + build_type,
@@ -715,6 +719,7 @@ def compile_h750(args):
             'build_type': build_type, 'build_target': target, 'toolchain_file': toolchain_value,
             'toolchain_bin': toolchain_bin, 'output_root': str(output_root), 'built_at': stamp,
             'runtime': runtime_info,
+            'snapshot_adaptations': adaptations,
             'message': 'H750 固件编译成功，ELF 已校验并生成 BIN / HEX；可以在现有烧录窗口中选择烧录。'}
     atomic_json(variant / 'manifest.json', data)
     return data

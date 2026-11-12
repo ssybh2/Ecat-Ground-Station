@@ -1,4 +1,4 @@
-# v0.4.2 H750 烧录与轻量本地编译
+# v0.4.3 H750 烧录与轻量本地编译
 
 在 **首次配置 → 3 H750 固件** 中有两条独立路径：
 
@@ -20,6 +20,18 @@
 编译使用普通用户，在独立源码快照及构建目录中运行 CMake / Make，不修改原工程。当前尝试失败时不选择历史 ELF。成功后校验 ARM ELF32、加载范围及 H750 内部 Flash 边界，生成 BIN、HEX 和带 SHA256 的 manifest。构建结果与设置会保存，重启可恢复；进入软件时仍默认显示手动烧录页，不自动选择历史编译文件。源码后续修改需要重新编译。
 
 编译不会触发烧录。原有的自选 ELF/HEX/BIN、独立烧录窗口、ST-Link 和 MCU 检测、halt、擦写和回读校验均保留。编译产物烧录前仍检查 SHA256。
+
+## Debug 与 128 KiB Flash
+
+Debug 保留调试符号，使用 `-Os -g3` 适配 H750 的 128 KiB Flash；部分变量可能被优化。目录编译选项也应用于 HAL / FreeRTOS 子目录，避免上游工具链无条件设置 `-O0` 导致固件超限。构建类型仍为 Debug，不切换为 Release，也不扩大 Flash 边界。
+
+对 SHA256 为 `5d172f21167dbe121863da482307c29ca5cc63851a6e34dfef14f7e2e0a25c33` 的已知上游 `Application/task_defs.hpp`，若工程没有提供基类实现，在编译快照中将 `CanRunnable::can_recv` 和 `I2CRunnable::i2c_recv` 声明为纯虚接口，修复缺少虚函数表的链接错误。已经修改的头文件及已经提供基类实现的自定义工程不自动改写。
+
+这些适配只修改独立编译快照。每个修改文件的原始及修改后 SHA256、修改原因都记录在 `manifest.json` 的 `snapshot_adaptations` 中；原始源码目录不变。
+
+本次实际 Debug 验证中，原 `-O0` 构建达到 215,012 B 并产生虚函数表错误，修复后 Flash 为 96,200 B，ELF 保留 `.debug_info`，BIN / HEX 均已生成。没有执行烧录。
+
+151 项测试通过，包含 `-O0` 下的真实 C++ 虚函数表错误复现与修复验证，以及 Debug 优化选项对 ARM 子目录目标生效的实编检查。结果见 [h750-debug-validation.json](../artifacts/h750-debug-validation.json)。
 
 ## 依赖
 
