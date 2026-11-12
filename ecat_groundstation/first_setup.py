@@ -16,7 +16,7 @@ from PyQt5.QtCore import QUrl
 from PyQt5.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QLabel, QPushButton, QLineEdit, QComboBox, QSpinBox, QPlainTextEdit,
-    QProgressBar, QTabWidget, QScrollArea, QFileDialog, QMessageBox, QCheckBox,
+    QProgressBar, QTabWidget, QScrollArea, QFileDialog, QMessageBox, QCheckBox, QInputDialog,
 )
 from .setup_core import (
     STATE_VERSION, load_state, atomic_json, compact_cpus, cpu_list,
@@ -457,9 +457,12 @@ class FirstSetupPage(QWidget):
         row = QHBoxLayout()
         row.addWidget(action_button('获取 / 检查 H750 源码', self.prepare_h750))
         row.addWidget(action_button('编译H750固件', self.compile_h750, True))
+        self.h750_flash_artifact = action_button('烧录', self.flash_h750_artifact, True)
+        self.h750_flash_artifact.setToolTip('自动检测 ST-Link，将最近一次成功编译的固件擦写并回读校验；请先连接目标板。')
+        row.addWidget(self.h750_flash_artifact)
         row.addWidget(action_button('安装 H750 轻量基础依赖', lambda: self.start_job('install-tools', ['--tool-set', 'h750'])))
         layout.addLayout(row)
-        layout.addWidget(note('选择自己的 H750 源码工程，在普通用户的独立快照中编译，生成 ELF / BIN / HEX。编译完成后，请自主选择产物，再进入烧录页。\n'
+        layout.addWidget(note('选择自己的 H750 源码工程，在普通用户的独立快照中编译，生成 ELF / BIN / HEX。编译完成后点击「烧录」，自动使用本次编译产物并检测 ST-Link。\n'
                               '已有 ARM GCC 时，轻量模式只准备约 1 MB 头文件和约 100 KB GNU 源码，为 Cortex-M7 编译运行库并缓存。不会安装 347 MB 多架构库；也可自选完整 ARM 工具链。'))
         self.h750_artifact_label = note('尚未编译；也可以直接选择现有固件烧录。')
         layout.addWidget(self.h750_artifact_label)
@@ -876,8 +879,9 @@ class FirstSetupPage(QWidget):
         if self.start_job('compile-h750', args):
             self.state.pop('h750_artifact', None)
             self.h750_use_artifact.setEnabled(False)
+            self.h750_flash_artifact.setEnabled(False)
             self.persist()
-            self.h750_artifact_label.setText('正在编译 H750 固件，进度见下方日志；完成后可手动烧录。')
+            self.h750_artifact_label.setText('正在编译 H750 固件，进度见下方日志；完成后点击「烧录」。')
 
     def current_h750_artifact(self):
         record = self.state.get('h750_artifact')
@@ -895,10 +899,46 @@ class FirstSetupPage(QWidget):
     def refresh_h750_artifact(self):
         record = self.current_h750_artifact()
         self.h750_use_artifact.setEnabled(record is not None)
+        self.h750_flash_artifact.setEnabled(record is not None)
         if not record:
             self.h750_artifact_label.setText('尚无当前设置对应的编译产物；可编译源码，或手动选择已有固件。')
             return
-        self.h750_artifact_label.setText('上次编译成功：' + record['image'] + '\n点击「选择编译产物用于烧录」自主选择 ELF / BIN / HEX；源码修改后请重新编译。')
+        self.h750_artifact_label.setText('上次编译成功：' + record['image'] + '\n点击上方「烧录」直接烧录此固件；源码修改后请重新编译。')
+
+    def flash_h750_artifact(self):
+        if self.busy:
+            return
+        record = self.current_h750_artifact()
+        if not record:
+            self.refresh_h750_artifact()
+            QMessageBox.information(self, '尚无编译产物', '请先使用当前设置成功编译 H750 固件。')
+            return
+        try:
+            image = Path(record['image']).resolve()
+            if not record.get('sha256') or sha256_file(image) != record['sha256']:
+                raise ValueError('编译产物已改变，请重新编译后烧录。')
+            flash_ranges(image)
+            links = detect_stlinks()
+            if not links:
+                QMessageBox.information(self, '未连接 ST-Link', '请连接 ST-Link USB、SWD 与目标板逻辑供电后，再点击「烧录」。')
+                return
+            selected = links[0]
+            if len(links) > 1:
+                labels = [f"{i + 1}. {link['product']} · {link['serial'] or link['path']}" for i, link in enumerate(links)]
+                label, accepted = QInputDialog.getItem(self, '选择 ST-Link', '检测到多个设备，请选择目标板对应的 ST-Link：', labels, 0, False)
+                if not accepted:
+                    return
+                selected = links[labels.index(label)]
+                if not selected['serial']:
+                    raise ValueError('所选 ST-Link 没有可区分的序列号，请只连接一个设备后重试。')
+            if not shutil.which('openocd'):
+                QMessageBox.information(self, '缺少烧录工具', '请在「选择本地固件并烧录」页点击「安装 OpenOCD」。')
+                return
+            self.start_job('flash-mcu', ['--target', 'h750', '--image', str(image),
+                                       '--expected-hash', record['sha256'], '--serial', selected['serial'],
+                                       '--speed', str(self.h750.speed.value()), '--base', '0x08000000'])
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, '无法烧录编译产物', str(exc))
 
     def choose_h750_artifact(self):
         record = self.current_h750_artifact()

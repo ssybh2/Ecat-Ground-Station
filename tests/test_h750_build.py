@@ -206,3 +206,69 @@ def test_direct_local_firmware_flash_requires_no_source_or_compiler(tmp_path, mo
     assert str(image) in calls[0][1] and 'h750' in calls[0][1]
     page.timer.stop()
     page.close()
+
+
+@pytest.mark.parametrize('probe_count', [0, 1, 2])
+def test_build_flash_uses_exact_artifact_without_path_or_confirmation_dialog(tmp_path, monkeypatch, probe_count):
+    from PyQt5.QtWidgets import QInputDialog
+    app = QApplication.instance() or QApplication([])
+    page = FirstSetupPage(state_path=tmp_path / 'state.json')
+    manual = str(tmp_path / 'manual.bin')
+    page.h750.image.setText(manual)
+    image = tmp_path / 'newly compiled.bin'
+    image.write_bytes(b'\0' * 32)
+    record = {**page.h750_settings(), 'image': str(image), 'sha256': sha256_file(image)}
+    page.job_finished('compile-h750', True, record)
+    links = [{'serial': f'PROBE{i}', 'product': 'STLINK'} for i in range(probe_count)]
+    monkeypatch.setattr('ecat_groundstation.first_setup.detect_stlinks', lambda: links)
+    monkeypatch.setattr('ecat_groundstation.first_setup.shutil.which', lambda name: '/usr/bin/' + name)
+    calls, messages = [], []
+    page.start_job = lambda action, args=(): calls.append((action, args)) or True
+    monkeypatch.setattr(QMessageBox, 'information', lambda *args: messages.append(args))
+    # Neither firmware path picker nor erase confirmation is part of this explicit action.
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *args: pytest.fail('unexpected file chooser'))
+    monkeypatch.setattr(QMessageBox, 'question', lambda *args: pytest.fail('unexpected confirmation'))
+    monkeypatch.setattr(QInputDialog, 'getItem', lambda *args: (args[3][-1], True))
+    page.h750_flash_artifact.click()
+    if probe_count:
+        assert len(calls) == 1 and calls[0][0] == 'flash-mcu' and not messages
+        args = calls[0][1]
+        assert args[args.index('--image') + 1] == str(image)
+        assert args[args.index('--expected-hash') + 1] == record['sha256']
+        assert args[args.index('--serial') + 1] == f'PROBE{probe_count - 1}'
+        assert args[args.index('--target') + 1] == 'h750'
+    else:
+        assert not calls and '未连接' in messages[0][1]
+    assert page.h750.image.text() == manual
+    # Refuse a modified artifact, even if it still exists and the build settings match.
+    image.write_bytes(b'changed')
+    monkeypatch.setattr(QMessageBox, 'warning', lambda *args: messages.append(args))
+    calls.clear()
+    page.flash_h750_artifact()
+    assert not calls and '改变' in messages[-1][-1]
+    page.timer.stop()
+    page.close()
+
+
+def test_build_flash_cancelled_probe_choice_and_failed_rebuild_never_flash(tmp_path, monkeypatch):
+    from PyQt5.QtWidgets import QInputDialog
+    app = QApplication.instance() or QApplication([])
+    page = FirstSetupPage(state_path=tmp_path / 'state.json')
+    image = tmp_path / 'firmware.bin'
+    image.write_bytes(b'\0' * 32)
+    page.job_finished('compile-h750', True, {**page.h750_settings(), 'image': str(image), 'sha256': sha256_file(image)})
+    monkeypatch.setattr('ecat_groundstation.first_setup.detect_stlinks', lambda: [
+        {'serial': 'A', 'product': 'STLINK'}, {'serial': 'B', 'product': 'STLINK'}])
+    monkeypatch.setattr(QInputDialog, 'getItem', lambda *args: ('', False))
+    calls = []
+    page.start_job = lambda action, args=(): calls.append(action) or True
+    page.flash_h750_artifact()
+    assert not calls
+    page.compile_h750()
+    page.job_finished('compile-h750', False, {'message': 'failure'})
+    assert not page.h750_flash_artifact.isEnabled()
+    monkeypatch.setattr(QMessageBox, 'information', lambda *args: None)
+    page.flash_h750_artifact()
+    assert calls == ['compile-h750']
+    page.timer.stop()
+    page.close()

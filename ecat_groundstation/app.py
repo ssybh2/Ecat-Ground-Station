@@ -23,7 +23,7 @@ from .bridge import Bridge
 from .widgets import Topology, CommandPanel
 from .first_setup import FirstSetupPage
 from . import __version__
-from .workspace_config import config_path, infer_workspace, write_workspace_config, last_workspace_project, WorkspaceAccessError
+from .workspace_config import config_path, infer_workspace, write_workspace_config, last_workspace_project, WorkspaceAccessError, load_workspace_project
 from .setup_core import load_state
 
 
@@ -251,6 +251,8 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(button('+ 从站', self.add_slave, 'primary'))
         toolbar.addWidget(button('删除从站', self.remove_slave))
         toolbar.addWidget(button('导出 YAML', self.export))
+        self.load_config_workspace_btn = button('加载已有工作空间…', lambda: self.load_existing_workspace(self.PAGE_CONFIG))
+        toolbar.addWidget(self.load_config_workspace_btn)
         toolbar.addStretch()
         l.addWidget(self.config_toolbar)
         self.edit_notice = QLabel('应用任务修改会校验并写入当前工作空间的 config.yaml；再点击 colcon build 编译。主站需重新运行后加载新配置。')
@@ -263,7 +265,8 @@ class MainWindow(QMainWindow):
         self.config_workspace.setReadOnly(True)
         self.config_workspace.setPlaceholderText('从首次配置进入，或选择已有 soem_bringup 的工作空间')
         binding.addWidget(self.config_workspace, 1)
-        self.choose_config_workspace_btn = button('选择工作空间…', self.choose_config_workspace)
+        self.choose_config_workspace_btn = button('关联写入工作空间…', self.choose_config_workspace)
+        self.choose_config_workspace_btn.setToolTip('仅更改写入位置，保留当前任务。如需读取已有任务，请使用「加载已有工作空间」。')
         binding.addWidget(self.choose_config_workspace_btn)
         l.addLayout(binding)
         self.config_split = QSplitter()
@@ -347,6 +350,15 @@ class MainWindow(QMainWindow):
 
     def build_control(self):
         l = self.page('执行器与传感器调试', '双击任务打开独立窗口，可分别查看反馈、编辑目标值、绘制曲线并导出 CSV。')
+        workspace = QHBoxLayout()
+        workspace.addWidget(QLabel('当前工作空间'))
+        self.control_workspace = QLineEdit(self.project.workspace)
+        self.control_workspace.setReadOnly(True)
+        self.control_workspace.setPlaceholderText('加载已有工作空间，读取其中的任务和 ROS 话题')
+        workspace.addWidget(self.control_workspace, 1)
+        self.load_control_workspace_btn = button('加载已有工作空间…', lambda: self.load_existing_workspace(self.PAGE_CONTROL))
+        workspace.addWidget(self.load_control_workspace_btn)
+        l.addLayout(workspace)
         domain = QHBoxLayout()
         domain.addWidget(QLabel('ROS_DOMAIN_ID'))
         self.domain_edit = QSpinBox()
@@ -396,6 +408,7 @@ class MainWindow(QMainWindow):
 
     def refresh(self):
         self.config_workspace.setText(self.project.workspace)
+        self.control_workspace.setText(self.project.workspace)
         si, ti = self.selection
         self.tree.blockSignals(True)
         self.tree.clear()
@@ -639,6 +652,40 @@ class MainWindow(QMainWindow):
         self.first_setup.state['workspace'] = self.project.workspace
         self.first_setup.persist()
         self.changed()
+
+    def load_existing_workspace(self, destination=PAGE_CONFIG):
+        if not self.editable():
+            return
+        path = QFileDialog.getExistingDirectory(self, '加载已有 EtherCAT 工作空间（读取 src/soem_bringup/config/config.yaml）',
+                                                self.project.workspace or str(Path.home()))
+        if not path:
+            return
+        try:
+            project, warnings = load_workspace_project(path)
+        except Exception as exc:
+            QMessageBox.warning(self, '加载工作空间失败', str(exc))
+            return
+        if not self.discard_ok():
+            return
+        self.close_panels()
+        self.project = project
+        self.project_path, self.dirty = None, False
+        self.pending_task = None
+        self.selection = 0, 0
+        self.last_config_write = None
+        self.sync_project_fields()
+        self.first_setup.workspace_edit.setText(project.workspace)
+        self.first_setup.state['workspace'] = project.workspace
+        self.first_setup.persist()
+        self.refresh()
+        self.nav.setCurrentRow(destination)
+        target = config_path(project.workspace)
+        self.config_apply_status.setText(f'已加载：{target}\n任务已同步到编辑和调试界面。编辑后点击「应用任务修改」，再 colcon build；主站需重新启动。')
+        self.append_log(f'已加载工作空间：{project.workspace} · {len(project.slaves)} 个从站 / {len(self.control_keys)} 个任务；未修改源文件。')
+        for warning in warnings:
+            self.append_log('加载提示：' + warning)
+        if warnings:
+            QMessageBox.information(self, '工作空间加载提示', '\n'.join(warnings[:15]))
 
     def sync_task_config(self, build_after=False):
         self.commit_pending()
@@ -981,6 +1028,7 @@ class MainWindow(QMainWindow):
         self.config_split.setEnabled(not connected and not self.first_setup.busy)
         self.config_toolbar.setEnabled(not connected and not self.first_setup.busy)
         self.choose_config_workspace_btn.setEnabled(not connected and not self.first_setup.busy)
+        self.load_control_workspace_btn.setEnabled(not connected and not self.first_setup.busy)
         self.config_build_btn.setEnabled(not connected and not self.first_setup.busy and bool(self.project.workspace.strip()))
         self.domain_edit.setEnabled(not connected and not self.first_setup.busy)
         self.config_cancel_btn.setEnabled(self.config_build_active and self.first_setup.busy)

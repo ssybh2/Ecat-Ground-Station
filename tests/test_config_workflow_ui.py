@@ -5,7 +5,7 @@ import copy
 from pathlib import Path
 
 import pytest
-from PyQt5.QtWidgets import QApplication, QMessageBox
+from PyQt5.QtWidgets import QApplication, QMessageBox, QFileDialog
 from PyQt5.QtTest import QTest
 
 from ecat_groundstation.app import MainWindow
@@ -143,3 +143,65 @@ def test_create_bringup_warns_only_for_actual_missing_settings(app, tmp_path, mo
     assert not calls and 'nohz_full' in messages[0]
     page.timer.stop()
     page.close()
+
+
+@pytest.mark.parametrize('destination', [MainWindow.PAGE_CONFIG, MainWindow.PAGE_CONTROL])
+def test_load_workspace_populates_editor_and_debug_topics_then_edits_selected_workspace(app, tmp_path, monkeypatch, destination):
+    existing = make_project(tmp_path)
+    slave = existing.slaves[0]
+    slave.tasks = [Task.create(4, slave.sn, 1)]
+    slave.tasks[0].values['sub_topic'] = '/custom/real/throttle'
+    target = Path(existing.workspace) / 'src/soem_bringup/config/config.yaml'
+    target.write_text(existing.export_yaml())
+    original = target.read_bytes()
+    w = MainWindow()
+    w.first_setup.state_path = tmp_path / 'ui-state.json'
+    monkeypatch.setattr(QFileDialog, 'getExistingDirectory', lambda *args: existing.workspace)
+    w.load_existing_workspace(destination)
+    assert w.nav.currentRow() == destination
+    assert w.project.workspace == existing.workspace and not w.dirty
+    assert w.config_workspace.text() == w.control_workspace.text() == existing.workspace
+    assert w.first_setup.workspace_edit.text() == existing.workspace
+    assert w.tree.topLevelItem(0).text(0).endswith(slave.sn)
+    assert w.control_keys == [f'sn{slave.sn}/app_1']
+    assert w.pending_task.values['sub_topic'] == '/custom/real/throttle'
+    assert target.read_bytes() == original  # Loading must not write or regenerate YAML.
+    w.mode_combo.setCurrentIndex(0)
+    w.toggle_connection()
+    assert w.bridge.mode == 'demo'
+    ep = w.bridge.endpoints[w.control_keys[0]]
+    assert ep.task.values['sub_topic'] == '/custom/real/throttle'
+    w.open_panel(0)
+    assert len(w.panels) == 1
+    w.poll()
+    assert not w.load_control_workspace_btn.isEnabled()
+    w.toggle_connection()
+    w.field_editors['sdowrite_init_value'][1].setValue(100)
+    assert w.apply_task()
+    actual, _ = Project.import_yaml(target.read_text())
+    assert actual.slaves[0].tasks[0].values['sdowrite_init_value'] == 100
+    assert actual.slaves[0].tasks[0].values['sub_topic'] == '/custom/real/throttle'
+    w.dirty = False
+    w.close()
+    app.processEvents()
+
+
+def test_loading_bad_workspace_or_cancelling_discard_keeps_current_project(app, tmp_path, monkeypatch):
+    existing = make_project(tmp_path)
+    target = Path(existing.workspace) / 'src/soem_bringup/config/config.yaml'
+    target.write_text('slaves: [')
+    w = MainWindow()
+    original = w.project
+    messages = []
+    monkeypatch.setattr(QFileDialog, 'getExistingDirectory', lambda *args: existing.workspace)
+    monkeypatch.setattr(QMessageBox, 'warning', lambda *args: messages.append(args))
+    w.load_existing_workspace()
+    assert w.project is original and messages
+    target.write_text(existing.export_yaml())
+    w.dirty = True
+    monkeypatch.setattr(QMessageBox, 'question', lambda *args: QMessageBox.Cancel)
+    w.load_existing_workspace()
+    assert w.project is original and w.dirty
+    w.dirty = False
+    w.close()
+    app.processEvents()

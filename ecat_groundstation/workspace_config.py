@@ -1,11 +1,12 @@
 """Persist task configuration to its actual ROS workspace, with recoverable backups."""
 from pathlib import Path
+import ast
 import hashlib
 import json
 import os
 import time
 
-from .config import atomic_write, save_project
+from .config import Project, atomic_write, save_project, load_project
 from .setup_core import atomic_json, sha256_file
 
 
@@ -33,6 +34,67 @@ def infer_workspace(path):
         if path.parent.parent.parent.name == 'src' and (path.parent.parent / 'package.xml').is_file():
             return str(root)
     return ''
+
+
+def load_workspace_project(workspace):
+    """Read source YAML as truth; use a saved project only for non-YAML metadata.
+
+    Launch Python is parsed, never imported or executed while loading a workspace.
+    Loading is read-only, including for workspaces never created by this app.
+    """
+    target = config_path(workspace)
+    root = Path(workspace).expanduser().resolve()
+    project, warnings = Project.import_yaml(target.read_text(encoding='utf-8'))
+    project.workspace = str(root)
+    snapshot = root / '.ecat-groundstation/project.ecat.json'
+    if snapshot.is_file():
+        try:
+            saved = load_project(snapshot)
+            if saved.workspace and Path(saved.workspace).expanduser().resolve() == root:
+                for key in ('interface', 'rt_cpu', 'non_rt_cpus', 'ros_domain'):
+                    setattr(project, key, getattr(saved, key))
+                models = {s.sn: s.model for s in saved.slaves}
+                for slave in project.slaves:
+                    if models.get(slave.sn) == 'large':
+                        slave.model = 'large'
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError) as exc:
+            warnings.append(f'已忽略旧工程快照，任务仍从 config.yaml 读取：{exc}')
+
+    launch = target.parent.parent / 'launch/bringup.launch.py'
+    if launch.is_file():
+        try:
+            tree = ast.parse(launch.read_text(encoding='utf-8'))
+            settings = {}
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Dict):
+                    continue
+                keys = {k.value for k in node.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+                if not keys.intersection(('interface', 'rt_cpu', 'non_rt_cpus')):
+                    continue
+                for key, value in zip(node.keys, node.values):
+                    if not isinstance(key, ast.Constant) or key.value not in ('interface', 'rt_cpu', 'non_rt_cpus'):
+                        continue
+                    try:
+                        literal = ast.literal_eval(value)
+                    except (ValueError, TypeError):
+                        warnings.append(f'bringup.launch.py 的 {key.value} 是动态表达式，请核对工程设置。')
+                        continue
+                    expected = int if key.value == 'rt_cpu' else str
+                    if type(literal) is not expected:
+                        raise ValueError(f'{key.value} 类型不正确')
+                    if key.value in settings and settings[key.value] != literal:
+                        raise ValueError(f'{key.value} 有多个不同值，请核对工程设置')
+                    settings[key.value] = literal
+            for key, value in settings.items():
+                setattr(project, key, value)
+        except (OSError, SyntaxError, ValueError) as exc:
+            warnings.append(f'未完整读取 launch 参数，请核对网口和 CPU 设置：{exc}')
+    installed = root / 'install/soem_bringup/share/soem_bringup/config/config.yaml'
+    if not installed.is_file():
+        installed = root / 'install/share/soem_bringup/config/config.yaml'
+    if installed.is_file() and installed.read_bytes() != target.read_bytes():
+        warnings.append('源 config.yaml 与已安装配置不同；实机调试前请 colcon build 并重新启动主站。')
+    return project, warnings
 
 
 def write_workspace_config(project):

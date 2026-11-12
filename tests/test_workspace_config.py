@@ -8,7 +8,7 @@ import pytest
 
 from ecat_groundstation.config import Project, Slave, Task, load_project
 from ecat_groundstation.setup_core import FIRST_RUN_YAML, atomic_json, launch_file, sha256_file
-from ecat_groundstation.workspace_config import write_workspace_config, config_path, infer_workspace, last_workspace_project, WorkspaceAccessError
+from ecat_groundstation.workspace_config import write_workspace_config, config_path, infer_workspace, last_workspace_project, WorkspaceAccessError, load_workspace_project
 from ecat_groundstation import setup_worker as worker
 
 
@@ -98,6 +98,53 @@ def test_config_symlink_cannot_overwrite_outside_workspace(workspace, tmp_path):
     with pytest.raises(ValueError, match='工作空间之外'):
         write_workspace_config(project_for(workspace))
     assert outside.read_text() == 'preserve this file'
+
+
+def test_load_workspace_reads_current_yaml_instead_of_stale_snapshot(workspace):
+    saved = project_for(workspace)
+    saved.slaves[0].model = 'large'
+    saved.ros_domain = 42
+    write_workspace_config(saved)
+    current = project_for(workspace)
+    task = Task.create(4, current.slaves[0].sn, 1)
+    task.values['sub_topic'] = '/existing/throttle'
+    current.slaves[0].tasks = [task]
+    target = config_path(workspace)
+    target.write_text(current.export_yaml())
+    before = {p: p.read_bytes() for p in workspace.rglob('*') if p.is_file()}
+    loaded, warnings = load_workspace_project(workspace)
+    assert loaded.workspace == str(workspace)
+    assert loaded.slaves[0].tasks == current.slaves[0].tasks
+    assert loaded.slaves[0].model == 'large'
+    assert (loaded.interface, loaded.rt_cpu, loaded.non_rt_cpus, loaded.ros_domain) == ('enp3s0', 2, '0-1', 42)
+    assert not warnings
+    assert before == {p: p.read_bytes() for p in workspace.rglob('*') if p.is_file()}
+
+
+def test_load_external_workspace_does_not_execute_launch_and_reports_stale_install(workspace, tmp_path):
+    current = project_for(workspace)
+    config_path(workspace).write_text(current.export_yaml())
+    sentinel = tmp_path / 'launch-must-not-run'
+    launch = workspace / 'src/soem_bringup/launch/bringup.launch.py'
+    with launch.open('a') as out:
+        out.write(f'\nopen({str(sentinel)!r}, "w").write("executed")\n')
+    installed = workspace / 'install/soem_bringup/share/soem_bringup/config/config.yaml'
+    installed.parent.mkdir(parents=True)
+    installed.write_text(FIRST_RUN_YAML)
+    loaded, warnings = load_workspace_project(workspace)
+    assert loaded.slaves[0].tasks == current.slaves[0].tasks
+    assert not sentinel.exists() and not (workspace / '.ecat-groundstation').exists()
+    assert any('已安装配置不同' in w for w in warnings)
+
+
+def test_bad_old_snapshot_does_not_prevent_loading_workspace(workspace):
+    saved = workspace / '.ecat-groundstation/project.ecat.json'
+    saved.parent.mkdir()
+    saved.write_text('{invalid json')
+    config_path(workspace).write_text(project_for(workspace).export_yaml())
+    loaded, warnings = load_workspace_project(workspace)
+    assert loaded.slaves[0].sn == '9876543'
+    assert any('忽略旧工程快照' in w for w in warnings)
 
 
 def test_recreating_bringup_preserves_final_task_configuration(workspace):
