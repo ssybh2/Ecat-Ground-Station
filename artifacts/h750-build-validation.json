@@ -1,0 +1,13 @@
+{
+  "validation": "real ARM CMake build of a temporary minimal H750 C project",
+  "build_target": "custom_h750",
+  "build_type": "Release",
+  "image_sha256": "4bb872aefe9cdbe53706335e5bdbe4e755b9fe5cdad68a05cd59e1f153dc8c3f",
+  "generated": [
+    "elf",
+    "bin",
+    "hex"
+  ],
+  "hardware_flashed": false,
+  "official_source_compile": "blocked before build: ARM C++ headers and standard library missing; no large package downloaded"
+}

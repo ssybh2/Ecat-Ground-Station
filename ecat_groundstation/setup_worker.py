@@ -501,9 +501,11 @@ def flash_mcu(args):
 
 TOOL_PACKAGES = {
     # binutils and newlib headers are hard dependencies of these packages.
-    # No C++ library, Ninja, host compiler suite, or USB CLI is required.
+    # IMU needs no C++ library; H750's C++ dependencies are a separate opt-in.
     'imu': ('cmake', 'make', 'gcc-arm-none-eabi', 'libnewlib-arm-none-eabi', 'python3-venv'),
     'flash': ('openocd',),
+    'h750': ('cmake', 'make', 'gcc-arm-none-eabi', 'libnewlib-arm-none-eabi', 'python3-venv',
+             'libstdc++-arm-none-eabi-dev', 'libstdc++-arm-none-eabi-newlib'),
 }
 
 
@@ -520,7 +522,7 @@ def install_tools(args):
         print('仅安装缺失的依赖：' + ', '.join(missing) + '；不安装推荐软件包。', flush=True)
         run(['apt-get', 'update'], timeout=1800)
         run(['apt-get', 'install', '-y', '--no-install-recommends', '--no-upgrade', *missing], timeout=7200)
-    label = 'IMU 编译依赖' if tool_set == 'imu' else 'OpenOCD 烧录工具'
+    label = {'imu': 'IMU 编译依赖', 'flash': 'OpenOCD 烧录工具', 'h750': 'H750 编译依赖'}[tool_set]
     return {'tool_set': tool_set, 'packages': missing,
             'message': label + ('已安装。' if missing else '已齐全，无需下载。') +
             ('不安装 ARM C++ 标准库。CMake 不足时，编译按钮会准备当前用户独立的 CMake 环境。' if tool_set == 'imu' else '')}
@@ -594,13 +596,125 @@ def compile_imu(args):
     return data
 
 
+H750_URL = 'https://github.com/AIMEtherCAT/EcatV2_AX58100_H750_Universal.git'
+H750_TARGET = 'EcatV2_AX58100_H750_Universal'
+
+
+def h750_source(path):
+    if not str(path).strip():
+        raise ValueError('请选择 H750 源码目录')
+    source = Path(path).expanduser().resolve()
+    if not (source / 'CMakeLists.txt').is_file():
+        raise ValueError('源码目录缺少 CMakeLists.txt，请选择 CMake 工程根目录')
+    markers = list(source.glob('*H750*.ld')) + list(source.glob('*h750*.ld'))
+    if not markers and not any('STM32H750' in p.read_text(errors='replace') for p in source.glob('*.ioc')):
+        raise ValueError('未识别到 STM32H750 的链接脚本或 IOC 配置，请核对源码目录')
+    return source
+
+
+def prepare_h750(args):
+    require_user()
+    if not str(args.repo).strip():
+        raise ValueError('请填写 H750 源码路径')
+    repo = Path(args.repo).expanduser().resolve()
+    if not repo.exists():
+        repo.parent.mkdir(parents=True, exist_ok=True)
+        run(['git', 'clone', '--recurse-submodules', H750_URL, repo], timeout=1800)
+    h750_source(repo)
+    if (repo / '.git').exists():
+        run(['git', 'submodule', 'update', '--init', '--recursive'], cwd=repo, timeout=1800)
+    return {'repo': str(repo), 'message': 'H750 源码已检查，现有本地修改已保留；可以编译固件。'}
+
+
+def compile_h750(args):
+    require_user()
+    repo = h750_source(args.repo)
+    output_root = Path(args.output_root).expanduser().resolve()
+    if not str(args.output_root).strip() or output_root.is_relative_to(repo):
+        raise ValueError('编译输出目录必须位于源码目录之外，避免快照递归复制')
+    build_type = getattr(args, 'build_type', 'Release')
+    target = getattr(args, 'build_target', H750_TARGET).strip()
+    if build_type not in ('Release', 'Debug', 'MinSizeRel', 'RelWithDebInfo'):
+        raise ValueError('构建类型不合法')
+    if not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.+-]{0,127}', target):
+        raise ValueError('请填写有效的 CMake 目标名称')
+    toolchain_bin = getattr(args, 'toolchain_bin', '').strip()
+    env = os.environ.copy()
+    if toolchain_bin:
+        compiler_dir = Path(toolchain_bin).expanduser().resolve()
+        if not compiler_dir.is_dir():
+            raise ValueError('ARM 工具链 bin 目录不存在')
+        env['PATH'] = str(compiler_dir) + os.pathsep + env.get('PATH', '')
+        toolchain_bin = str(compiler_dir)
+    gcc = shutil.which('arm-none-eabi-gcc', path=env.get('PATH'))
+    if not gcc or not shutil.which('arm-none-eabi-objcopy', path=env.get('PATH')):
+        raise ValueError('缺少 ARM 编译工具，请选择工具链 bin 目录或安装 H750 编译依赖')
+    cpp_sources = any(p.suffix in ('.cpp', '.cc', '.cxx') and
+                      not any(part.startswith(('build', 'cmake-build', '.')) for part in p.relative_to(repo).parts)
+                      for p in repo.rglob('*') if p.is_file())
+    if cpp_sources:
+        gpp = shutil.which('arm-none-eabi-g++', path=env.get('PATH'))
+        if not gpp:
+            raise ValueError('H750 源码包含 C++，所选工具链缺少 arm-none-eabi-g++')
+        flags = ['-mcpu=cortex-m7', '-mthumb', '-mfpu=fpv5-d16', '-mfloat-abi=hard']
+        standard_match = re.search(r'set\(\s*CMAKE_CXX_STANDARD\s+(\d+)', (repo / 'CMakeLists.txt').read_text(), re.I)
+        standard = int(standard_match[1]) if standard_match else 20
+        check_source = '#include <memory>\n' + ('#include <ranges>\n' if standard >= 20 else '') + 'int main() { return 0; }\n'
+        check = subprocess.run([gpp, *flags, '-std=c++' + str(standard), '-fsyntax-only', '-x', 'c++', '-'],
+                               input=check_source,
+                               capture_output=True, text=True, timeout=30, env=env)
+        library = subprocess.run([gpp, *flags, '-print-file-name=libstdc++.a'],
+                                 capture_output=True, text=True, timeout=30, env=env)
+        if check.returncode or not Path(library.stdout.strip()).is_file():
+            raise ValueError(f'H750 源码需要完整的 ARM C++{standard} 工具链（含头文件和静态库）。请自选完整工具链，或安装 H750 编译依赖；不会自动下载大型 C++ 库。\n' + check.stderr[-1500:])
+    toolchain_value = getattr(args, 'toolchain_file', '').strip()
+    toolchain = Path(toolchain_value).expanduser() if toolchain_value else repo / 'cmake/gcc-arm-none-eabi.cmake'
+    if not toolchain.is_absolute():
+        toolchain = repo / toolchain
+    toolchain = toolchain.resolve()
+    if not toolchain.is_file():
+        raise ValueError('找不到 CMake 工具链文件，请选择 gcc-arm-none-eabi.cmake')
+    modules = repo / '.gitmodules'
+    if modules.is_file() and 'ecat/soes' in modules.read_text() and not (repo / 'ecat/soes/soes/esc.c').is_file():
+        raise ValueError('SOES 子模块尚未就绪，请先点击获取 / 检查 H750 源码')
+    cmake = suitable_cmake(repo, output_root / 'toolchain')
+    stamp = str(time.time_ns())
+    variant = output_root / ('h750-' + stamp)
+    source = variant / 'source'
+    shutil.copytree(repo, source, ignore=shutil.ignore_patterns('.git', '.idea', '__pycache__', 'build', 'build-*',
+                                                             'cmake-build-*', '*.elf', '*.bin', '*.hex', '*.zip'))
+    selected_toolchain = source / toolchain.relative_to(repo) if toolchain.is_relative_to(repo) else toolchain
+    build = variant / 'build' / build_type
+    run([cmake, '-S', source, '-B', build, '-G', 'Unix Makefiles', '-DCMAKE_BUILD_TYPE=' + build_type,
+         '-DCMAKE_TOOLCHAIN_FILE=' + str(selected_toolchain)], timeout=180, env=env)
+    run([cmake, '--build', build, '--target', target, '--parallel', min(4, os.cpu_count() or 1)], timeout=1200, env=env)
+    matches = [p for p in build.rglob('*.elf') if p.name in (target, target + '.elf')]
+    if len(matches) != 1:
+        raise ValueError('没有找到唯一的目标 ELF，请核对 CMake 目标名称；不会使用旧固件')
+    image = matches[0]
+    flash_ranges(image)  # ARM ELF32 and H750 internal Flash bounds before offering it for flashing.
+    objcopy = shutil.which('arm-none-eabi-objcopy', path=env.get('PATH'))
+    binary, ihex = image.with_suffix('.bin'), image.with_suffix('.hex')
+    run([objcopy, '-O', 'binary', image, binary], env=env, timeout=60)
+    run([objcopy, '-O', 'ihex', image, ihex], env=env, timeout=60)
+    head = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=repo, capture_output=True, text=True)
+    data = {'repo': str(repo), 'image': str(image), 'bin': str(binary), 'hex': str(ihex),
+            'sha256': sha256_file(image), 'source_commit': head.stdout.strip(), 'source': str(source),
+            'build_type': build_type, 'build_target': target, 'toolchain_file': toolchain_value,
+            'toolchain_bin': toolchain_bin, 'output_root': str(output_root), 'built_at': stamp,
+            'message': 'H750 固件编译成功，ELF 已校验并生成 BIN / HEX；可以在现有烧录窗口中选择烧录。'}
+    atomic_json(variant / 'manifest.json', data)
+    return data
+
+
 ACTIONS = {'inspect': inspect, 'enable-rt': enable_rt, 'attach-pro': attach_pro,
            'isolate-cpu': isolate_cpu, 'create-workspace': create_workspace,
            'create-bringup': create_bringup, 'build-workspace': build_workspace,
            'root-shell': root_shell, 'repair-workspace-access': repair_workspace_access, 'flash-eeprom': flash_eeprom,
            'prepare-eeprom-tool': prepare_eeprom_tool, 'diagnose-eeprom': diagnose_eeprom,
            'probe-mcu': probe_mcu, 'flash-mcu': flash_mcu, 'install-tools': install_tools,
-           'prepare-imu': prepare_imu, 'compile-imu': compile_imu}
+           'prepare-imu': prepare_imu, 'compile-imu': compile_imu,
+           'prepare-h750': prepare_h750, 'compile-h750': compile_h750}
 
 
 def main(argv=None):
@@ -619,7 +733,11 @@ def main(argv=None):
     parser.add_argument('--non-rt-cpus', default='1')
     parser.add_argument('--domain', type=int, default=0)
     parser.add_argument('--target', choices=('h750', 'g431'), default='h750')
-    parser.add_argument('--tool-set', choices=('imu', 'flash'), default='imu')
+    parser.add_argument('--tool-set', choices=('imu', 'flash', 'h750'), default='imu')
+    parser.add_argument('--toolchain-file', default='')
+    parser.add_argument('--toolchain-bin', default='')
+    parser.add_argument('--build-type', default='Release')
+    parser.add_argument('--build-target', default=H750_TARGET)
     parser.add_argument('--serial', default='')
     parser.add_argument('--speed', type=int, default=400)
     parser.add_argument('--base', default='0x08000000')

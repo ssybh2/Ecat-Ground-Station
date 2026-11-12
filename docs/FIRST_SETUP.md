@@ -66,6 +66,10 @@ nohz=on nohz_full=X rcu_nocbs=X isolcpus=domain,managed_irq,X irqaffinity=Y
 
 ## 3. H750 固件窗口
 
+v0.4.0 增加本地 CMake 编译：可自选源码目录、输出目录、ARM 工具链 bin、CMake 工具链文件、目标名称和构建类型。点击 **编译H750固件**，在普通用户的独立快照中构建，实时显示日志；成功后生成 ELF / BIN / HEX，并自动将 ELF 填入现有烧录界面。也可点击 **获取 / 检查 H750 源码** 获取官方工程与 SOES 子模块。完整说明见 [H750 本地编译](H750_BUILD.md)。
+
+手动选择已有固件、独立烧录窗口、ST-Link 检测、halt、烧录与回读校验继续保留。
+
 选择本机 `.elf` / `.hex` / `.bin` 固件，检测 ST-Link；多个探针时选择序列号。未连接时才提示连接。默认 400 kHz，使用 H750/H7 target：
 
 ```text
