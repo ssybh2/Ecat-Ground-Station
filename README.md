@@ -2,7 +2,7 @@
 
 Ubuntu 22.04 · ROS 2 Humble · Python 3.10
 
-![Ecat GroundStation](artifacts/overview.png)
+[▶ 演示视频（MP4）](artifacts/demo.mp4)
 
 ## 部署
 
