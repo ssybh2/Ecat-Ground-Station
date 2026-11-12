@@ -27,12 +27,13 @@ from .setup_core import (
 from .config import Project, Slave, Task
 
 
-PRIVILEGED = {'enable-rt', 'isolate-cpu', 'flash-eeprom', 'diagnose-eeprom', 'probe-mcu', 'flash-mcu', 'install-tools'}
+PRIVILEGED = {'enable-rt', 'isolate-cpu', 'flash-eeprom', 'diagnose-eeprom', 'probe-mcu', 'flash-mcu', 'install-tools', 'repair-workspace-access'}
 JOB_LABELS = {'inspect': '检查当前电脑', 'enable-rt': '启用实时内核', 'isolate-cpu': 'CPU 核心隔离',
               'create-workspace': '创建工作空间', 'flash-eeprom': '刷写 EEPROM', 'probe-mcu': '检测 MCU',
               'flash-mcu': '烧录与回读校验', 'prepare-imu': '准备 IMU 源码', 'compile-imu': '编译 IMU',
               'install-tools': '安装编译 / 烧录工具', 'create-bringup': '生成 bringup 包', 'build-workspace': 'colcon build',
-              'prepare-eeprom-tool': '准备逐字校验工具', 'diagnose-eeprom': 'EEPROM 只读诊断'}
+              'prepare-eeprom-tool': '准备逐字校验工具', 'diagnose-eeprom': 'EEPROM 只读诊断',
+              'repair-workspace-access': '修复工作空间写入权限'}
 
 
 def action_button(text, slot, primary=False):

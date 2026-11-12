@@ -23,7 +23,7 @@ from .bridge import Bridge
 from .widgets import Topology, CommandPanel
 from .first_setup import FirstSetupPage
 from . import __version__
-from .workspace_config import config_path, infer_workspace, write_workspace_config, last_workspace_project
+from .workspace_config import config_path, infer_workspace, write_workspace_config, last_workspace_project, WorkspaceAccessError
 from .setup_core import load_state
 
 
@@ -115,6 +115,7 @@ class MainWindow(QMainWindow):
         self.selection = (0, -1)
         self.config_build_active = False
         self.last_config_write = None
+        self.pending_config_retry = None
         self.log_seen = None
         self.setWindowTitle('Ecat GroundStation · EtherCAT 配置与调试')
         self.resize(1500, 920)
@@ -184,6 +185,7 @@ class MainWindow(QMainWindow):
         self.first_setup.configured.connect(self.adopt_first_setup)
         self.first_setup.workspace_built.connect(self.workspace_build_finished)
         self.first_setup.jobs.output.connect(self.setup_job_output)
+        self.first_setup.jobs.done.connect(self.config_access_repaired)
         self.pages.addWidget(self.first_setup)
         self.build_config()
         self.build_control()
@@ -638,13 +640,21 @@ class MainWindow(QMainWindow):
         self.first_setup.persist()
         self.changed()
 
-    def sync_task_config(self):
+    def sync_task_config(self, build_after=False):
         self.commit_pending()
         if not self.project.workspace.strip():
             self.config_apply_status.setText('任务已更新到工程。尚未关联工作空间，请先选择工作空间，再应用或编译。')
             return None
         try:
             result = write_workspace_config(self.project)
+        except WorkspaceAccessError as exc:
+            self.config_apply_status.setText('正在申请修复工作空间写入权限，完成后会自动重试。请在系统认证窗口授权。')
+            self.append_log(str(exc))
+            self.pending_config_retry = (self.project, self.project.workspace, build_after)
+            if not self.first_setup.start_job('repair-workspace-access', ['--workspace', self.project.workspace]):
+                self.pending_config_retry = None
+                self.config_apply_status.setText('配置尚未写入，工作空间权限修复未开始。')
+            return None
         except (ValueError, OSError, RuntimeError) as exc:
             self.config_apply_status.setText('未能写入工作空间：' + str(exc))
             self.append_log('配置未写入：' + str(exc))
@@ -665,10 +675,24 @@ class MainWindow(QMainWindow):
             self.append_log('旧配置备份：' + result['backup'])
         return result
 
+    def config_access_repaired(self, action, success, data):
+        if action != 'repair-workspace-access' or self.pending_config_retry is None:
+            return
+        project, workspace, build_after = self.pending_config_retry
+        self.pending_config_retry = None
+        if not success:
+            self.config_apply_status.setText('配置尚未写入：' + data.get('message', '工作空间权限修复未完成'))
+            return
+        if self.project is not project or self.project.workspace != workspace:
+            self.config_apply_status.setText('权限已修复，工程已切换，请重新应用任务修改。')
+            return
+        # Let the completed job's callbacks finish before starting a build.
+        QTimer.singleShot(0, self.build_task_workspace if build_after else self.sync_task_config)
+
     def build_task_workspace(self):
         if not self.editable():
             return
-        result = self.sync_task_config()
+        result = self.sync_task_config(build_after=True)
         if not result:
             return
         self.config_build_active = True

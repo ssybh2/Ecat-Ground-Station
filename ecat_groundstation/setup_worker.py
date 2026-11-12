@@ -188,6 +188,39 @@ def isolate_cpu(args):
             'plan': plan.to_dict(), 'backup': str(backup), 'reboot_required': True}
 
 
+def ensure_workspace_metadata(workspace):
+    """Keep app data writable by the workspace owner, including before root launch."""
+    owner = workspace.stat()
+    if owner.st_uid == 0:
+        raise ValueError('工作空间属于 root，请使用普通用户拥有的工作空间')
+    invoking_uid = os.environ.get('PKEXEC_UID')
+    if os.geteuid() == 0 and invoking_uid is not None and int(invoking_uid) != owner.st_uid:
+        raise ValueError('只能修复当前登录用户拥有的工作空间')
+    metadata = workspace / '.ecat-groundstation'
+    if metadata.is_symlink() or not metadata.resolve().is_relative_to(workspace):
+        raise ValueError('工程数据目录不能是符号链接，未修改权限')
+    metadata.mkdir(mode=0o755, exist_ok=True)
+    current = metadata.stat()
+    if current.st_uid == 0 and os.geteuid() == 0:
+        # Only the app's top-level directory: never recursively chown the
+        # workspace, source configuration, build products, or ROS logs.
+        os.chown(metadata, owner.st_uid, owner.st_gid, follow_symlinks=False)
+        metadata.chmod((current.st_mode & 0o777) | 0o700)
+    elif current.st_uid != owner.st_uid:
+        raise PermissionError(f'工程数据目录不属于工作空间用户：{metadata}')
+    return metadata
+
+
+def repair_workspace_access(args):
+    require_root()
+    workspace = validate_workspace(args.workspace)
+    if not (workspace / 'src/soem_bringup/package.xml').is_file():
+        raise ValueError('工作空间缺少 soem_bringup，未修改权限')
+    metadata = ensure_workspace_metadata(workspace)
+    return {'workspace': str(workspace), 'metadata': str(metadata),
+            'message': '已修复工程数据目录归属，可以由普通用户备份并写入任务配置。'}
+
+
 def create_workspace(args):
     require_user()
     path = workspace_path(args.name)
@@ -195,6 +228,7 @@ def create_workspace(args):
         raise ValueError('同名目录已存在且不是本软件创建的工作空间，请换一个名称，避免覆盖已有工程')
     path.mkdir(parents=True, exist_ok=True)
     (path / 'src').mkdir(exist_ok=True)
+    ensure_workspace_metadata(path)
     marker = path / '.ecat-groundstation-workspace.json'
     # Retain a marker on failure so network-interrupted jobs can be retried.
     atomic_json(marker, {'version': 1, 'master_url': MASTER_URL})
@@ -307,13 +341,14 @@ def root_shell(args):
         raise ValueError('ROS setup 路径不合法')
     if not (workspace / 'install/setup.bash').is_file():
         raise ValueError('工作空间尚未成功构建')
+    metadata = ensure_workspace_metadata(workspace)
     fd, rc = tempfile.mkstemp(prefix='ecat-first-run-root-', suffix='.bash')
     try:
         with os.fdopen(fd, 'w') as out:
             # Keep launch/backend logs beside this workspace so diagnostics do
             # not require access to /root/.ros after the terminal is closed.
             out.write('umask 022\n')
-            log_dir = workspace / '.ecat-groundstation/ros-logs'
+            log_dir = metadata / 'ros-logs'
             out.write('export ROS_LOG_DIR=' + shlex.quote(str(log_dir)) + '\n')
             out.write('source ' + shlex.quote(str(setup)) + '\n')
             out.write('source ' + shlex.quote(str(workspace / 'install/setup.bash')) + '\n')
@@ -539,7 +574,7 @@ def compile_imu(args):
 ACTIONS = {'inspect': inspect, 'enable-rt': enable_rt, 'attach-pro': attach_pro,
            'isolate-cpu': isolate_cpu, 'create-workspace': create_workspace,
            'create-bringup': create_bringup, 'build-workspace': build_workspace,
-           'root-shell': root_shell, 'flash-eeprom': flash_eeprom,
+           'root-shell': root_shell, 'repair-workspace-access': repair_workspace_access, 'flash-eeprom': flash_eeprom,
            'prepare-eeprom-tool': prepare_eeprom_tool, 'diagnose-eeprom': diagnose_eeprom,
            'probe-mcu': probe_mcu, 'flash-mcu': flash_mcu, 'install-tools': install_tools,
            'prepare-imu': prepare_imu, 'compile-imu': compile_imu}

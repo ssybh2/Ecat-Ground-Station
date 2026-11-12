@@ -12,6 +12,7 @@ from ecat_groundstation.app import MainWindow
 from ecat_groundstation.first_setup import FirstSetupPage
 from ecat_groundstation.config import Project, Slave, Task
 from ecat_groundstation.setup_core import FIRST_RUN_YAML, Cpu, choose_isolation
+from ecat_groundstation.workspace_config import WorkspaceAccessError, write_workspace_config
 
 
 @pytest.fixture(scope='module')
@@ -66,6 +67,47 @@ def test_apply_task_replaces_workspace_yaml_and_build_uses_user_job(app, tmp_pat
     w.first_setup.jobs.busy = False
     w.workspace_build_finished(True, {**w.last_config_write, 'installed_config': str(tmp_path / 'install/config.yaml')})
     assert '安装配置已更新并核对一致' in w.config_apply_status.text()
+    w.dirty = False
+    w.close()
+    app.processEvents()
+
+
+@pytest.mark.parametrize('build_after', [False, True])
+@pytest.mark.parametrize('authorized', [False, True])
+def test_root_metadata_repair_preserves_edits_and_retries_after_authorization(app, tmp_path, monkeypatch, build_after, authorized):
+    project = make_project(tmp_path)
+    w = MainWindow(project)
+    w.first_setup.state_path = tmp_path / 'state.json'
+    w.tree.setCurrentItem(w.tree.topLevelItem(0).child(0))
+    w.field_editors['sdowrite_can_id'][1].setValue(22)
+    attempts, jobs, builds = [], [], []
+
+    def initial_failure_then_write(p):
+        attempts.append(p)
+        if len(attempts) == 1:
+            raise WorkspaceAccessError('root-owned app data')
+        return write_workspace_config(p)
+
+    monkeypatch.setattr('ecat_groundstation.app.write_workspace_config', initial_failure_then_write)
+    w.first_setup.start_job = lambda action, args=(): jobs.append((action, args)) or True
+    w.first_setup.build_workspace = lambda **kwargs: builds.append(kwargs) or True
+    if build_after:
+        w.build_task_workspace()
+    else:
+        w.apply_task()
+    target = Path(project.workspace) / 'src/soem_bringup/config/config.yaml'
+    assert target.read_text() == FIRST_RUN_YAML
+    assert jobs == [('repair-workspace-access', ['--workspace', project.workspace])]
+    w.config_access_repaired('repair-workspace-access', authorized, {'message': 'cancelled' if not authorized else 'fixed'})
+    QTest.qWait(30)
+    assert project.slaves[0].tasks[0].values['sdowrite_can_id'] == 22
+    if authorized:
+        assert target.read_text() == project.export_yaml()
+        assert len(attempts) == 2 and bool(builds) == build_after
+    else:
+        assert target.read_text() == FIRST_RUN_YAML and not builds
+        assert len(attempts) == 1 and 'cancelled' in w.config_apply_status.text()
+    w.config_build_active = False
     w.dirty = False
     w.close()
     app.processEvents()

@@ -41,6 +41,7 @@ def test_workspace_git_submodule_recursive_and_retry(tmp_path, monkeypatch):
     assert result['workspace'] == str(target)
     assert (target / 'src/EcatV2_Master/src/soem/soem/soem.c').is_file()
     assert os.access(target / 'src/EcatV2_Master/tools/eepromtool', os.X_OK)
+    assert (target / '.ecat-groundstation').stat().st_uid == target.stat().st_uid
     assert worker.create_workspace(Namespace(name='EGC_ws'))['workspace'] == str(target)
 
 
@@ -106,12 +107,56 @@ def test_root_shell_keeps_logs_readable_in_workspace_and_cleans_rc(tmp_path, mon
         assert 'export ROS_DOMAIN_ID=24\n' in content
         assert str(workspace / 'install/setup.bash') in content
         assert '--noprofile' in command and cwd == workspace
+        assert (workspace / '.ecat-groundstation').stat().st_uid == workspace.stat().st_uid
         calls.append(rc)
         return 0
 
     monkeypatch.setattr(worker.subprocess, 'call', shell)
     worker.root_shell(Namespace(workspace=str(workspace), ros_setup='/opt/ros/humble/setup.bash', domain=24))
     assert len(calls) == 1 and not calls[0].exists()
+
+
+def test_repair_only_changes_root_owned_metadata_not_source_or_logs(bringup_workspace, monkeypatch):
+    workspace = bringup_workspace
+    package = workspace / 'src/soem_bringup'
+    package.mkdir()
+    (package / 'package.xml').write_text('<package/>')
+    metadata = workspace / '.ecat-groundstation'
+    (metadata / 'ros-logs').mkdir(parents=True)
+    log = metadata / 'ros-logs/launch.log'
+    log.write_text('preserve existing root launch log')
+    owner = workspace.stat()
+    original_stat = Path.stat
+
+    def root_owned(path, *args, **kwargs):
+        value = original_stat(path, *args, **kwargs)
+        if path == metadata:
+            fields = list(value)
+            fields[4] = 0
+            return os.stat_result(fields)
+        return value
+
+    monkeypatch.setattr(Path, 'stat', root_owned)
+    monkeypatch.setattr(worker.os, 'geteuid', lambda: 0)
+    monkeypatch.setenv('PKEXEC_UID', str(owner.st_uid))
+    changed = []
+    monkeypatch.setattr(worker.os, 'chown', lambda *args, **kwargs: changed.append((args, kwargs)))
+    worker.repair_workspace_access(Namespace(workspace=str(workspace)))
+    assert changed == [((metadata, owner.st_uid, owner.st_gid), {'follow_symlinks': False})]
+    assert log.read_text() == 'preserve existing root launch log'
+    assert (package / 'package.xml').read_text() == '<package/>'
+
+
+def test_metadata_repair_rejects_symlink_and_other_workspace_owner(bringup_workspace, tmp_path, monkeypatch):
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    (bringup_workspace / '.ecat-groundstation').symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match='符号链接'):
+        worker.ensure_workspace_metadata(bringup_workspace)
+    monkeypatch.setattr(worker.os, 'geteuid', lambda: 0)
+    monkeypatch.setenv('PKEXEC_UID', str(bringup_workspace.stat().st_uid + 1))
+    with pytest.raises(ValueError, match='当前登录用户'):
+        worker.ensure_workspace_metadata(bringup_workspace)
 
 
 @pytest.mark.parametrize('readback_matches', [True, False])

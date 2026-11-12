@@ -2,10 +2,15 @@
 from pathlib import Path
 import hashlib
 import json
+import os
 import time
 
 from .config import atomic_write, save_project
 from .setup_core import atomic_json, sha256_file
+
+
+class WorkspaceAccessError(PermissionError):
+    """A root launch from an older version created the app data directory."""
 
 
 def config_path(workspace):
@@ -40,6 +45,8 @@ def write_workspace_config(project):
     marker = root / 'src/soem_bringup/.ecat-groundstation-generated.json'
     if any(not path.resolve().is_relative_to(root) for path in (metadata, snapshot, marker, metadata / 'config-backups')):
         raise ValueError('工程元数据目录指向工作空间之外')
+    if metadata.is_dir() and metadata.stat().st_uid == 0 and os.geteuid() != 0:
+        raise WorkspaceAccessError(f'工程数据目录由 root 创建，需要修复归属：{metadata}')
     marker_data = json.loads(marker.read_text()) if marker.is_file() else None
     backup = None
     changed = not target.is_file() or target.read_text(encoding='utf-8') != content

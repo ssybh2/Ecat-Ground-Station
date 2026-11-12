@@ -2,12 +2,13 @@ from argparse import Namespace
 from pathlib import Path
 import json
 import shutil
+import os
 
 import pytest
 
 from ecat_groundstation.config import Project, Slave, Task, load_project
 from ecat_groundstation.setup_core import FIRST_RUN_YAML, atomic_json, launch_file, sha256_file
-from ecat_groundstation.workspace_config import write_workspace_config, config_path, infer_workspace, last_workspace_project
+from ecat_groundstation.workspace_config import write_workspace_config, config_path, infer_workspace, last_workspace_project, WorkspaceAccessError
 from ecat_groundstation import setup_worker as worker
 
 
@@ -66,6 +67,26 @@ def test_unbound_demo_and_wrong_workspace_are_rejected(tmp_path):
     project.workspace = str(tmp_path)
     with pytest.raises(ValueError, match='没有 soem_bringup'):
         write_workspace_config(project)
+
+
+def test_root_created_metadata_rejected_before_backups_or_yaml_changes(workspace, monkeypatch):
+    metadata = workspace / '.ecat-groundstation'
+    metadata.mkdir()
+    stat = Path.stat
+
+    def root_metadata(path, *args, **kwargs):
+        value = stat(path, *args, **kwargs)
+        if path == metadata:
+            fields = list(value)
+            fields[4] = 0
+            return os.stat_result(fields)
+        return value
+
+    monkeypatch.setattr(Path, 'stat', root_metadata)
+    with pytest.raises(WorkspaceAccessError, match='root'):
+        write_workspace_config(project_for(workspace))
+    assert config_path(workspace).read_text() == FIRST_RUN_YAML
+    assert not (metadata / 'config-backups').exists()
 
 
 def test_config_symlink_cannot_overwrite_outside_workspace(workspace, tmp_path):
