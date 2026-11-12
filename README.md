@@ -6,12 +6,16 @@ Ubuntu 22.04 · ROS 2 Humble · Python 3.10
 
 ## 部署
 
-需已安装 ROS 2 Humble，并使用普通用户在桌面环境中执行：
+需已安装 ROS 2 Humble。打开未加载其他工作空间的新终端，以普通用户在桌面环境中执行：
 
 ```bash
 sudo apt update
-sudo apt install -y git build-essential python3-colcon-common-extensions \
-  python3-pyqt5 python3-yaml ros-humble-rosidl-default-generators
+sudo apt install -y --no-install-recommends \
+  git build-essential cmake python3-colcon-common-extensions python3-setuptools \
+  python3-pyqt5 python3-yaml policykit-1 gnome-terminal fonts-noto-cjk \
+  ros-humble-rclpy ros-humble-rosidl-runtime-py \
+  ros-humble-rosidl-default-generators ros-humble-geometry-msgs ros-humble-sensor-msgs \
+  ros-humble-ament-cmake-auto libfmt-dev libyaml-cpp-dev
 
 mkdir -p ~/ecat_ws/src
 cd ~/ecat_ws/src
@@ -25,7 +29,7 @@ source install/setup.bash
 ros2 run ecat_groundstation ecat-groundstation
 ```
 
-`custom_msgs` 随工作空间一同编译。之后每次打开新终端，先加载环境再启动：
+上述命令编译上位机和 `custom_msgs`。之后每次打开新终端，先加载环境再启动：
 
 ```bash
 source /opt/ros/humble/setup.bash

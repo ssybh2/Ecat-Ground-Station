@@ -1,0 +1,21 @@
+{
+  "platform": "Ubuntu 22.04.5 LTS / ROS 2 Humble / Python 3.10.12",
+  "upstream_master_commit": "7c1bd8a3c7f47cc8505470640f8dd7baf5698d76",
+  "validation": "Independent temporary workspace with existing robot overlays removed from the subprocess environment; only /opt/ros/humble/setup.bash was sourced before building.",
+  "build_command": "colcon build --packages-up-to ecat_groundstation",
+  "built_packages": [
+    "custom_msgs",
+    "ecat_groundstation"
+  ],
+  "build_result": "success; 2 packages in 52.2 seconds",
+  "imports": [
+    "custom_msgs.msg.WriteOnBoardPWM",
+    "sensor_msgs.msg.Imu",
+    "rosidl_runtime_py.utilities.get_message",
+    "ecat_groundstation from the new install directory"
+  ],
+  "startup_command": "ros2 run ecat_groundstation ecat-groundstation --screenshot <temporary-preview.png>",
+  "startup_result": "success; exit code 0; screenshot generated with QT_QPA_PLATFORM=offscreen",
+  "apt_package_names_checked": 18,
+  "limits": "Used preinstalled host system dependencies; did not install packages or validate a pristine OS image. Did not start an EtherCAT master or publish actuator commands."
+}
