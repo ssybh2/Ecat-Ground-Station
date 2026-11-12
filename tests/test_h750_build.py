@@ -9,7 +9,8 @@ import shutil
 import subprocess
 
 import pytest
-from PyQt5.QtWidgets import QApplication, QPushButton
+from PyQt5.QtWidgets import QApplication, QPushButton, QFileDialog, QMessageBox
+from PyQt5.QtTest import QTest
 
 from ecat_groundstation import setup_worker as worker
 from ecat_groundstation.first_setup import FirstSetupPage, FirmwarePane, SetupJobs
@@ -110,9 +111,13 @@ def test_h750_jobs_are_ordinary_user_and_cpp_dependencies_are_separate():
     assert 'libstdc++-arm-none-eabi-newlib' not in worker.TOOL_PACKAGES['imu']
 
 
-def test_ui_compile_autofills_firmware_preserves_manual_selection_and_rejects_stale_settings(tmp_path):
+def test_ui_build_offers_choice_without_replacing_selected_firmware(tmp_path, monkeypatch):
     app = QApplication.instance() or QApplication([])
     page = FirstSetupPage(state_path=tmp_path / 'state.json')
+    assert page.h750_modes.currentIndex() == 0
+    manual = str(tmp_path / 'my existing firmware.bin')
+    page.h750.image.setText(manual)
+    page.h750_modes.setCurrentIndex(1)
     page.h750_repo.setText(str(tmp_path / 'local firmware'))
     calls = []
     page.start_job = lambda action, args=(): calls.append((action, args)) or True
@@ -124,7 +129,21 @@ def test_ui_compile_autofills_firmware_preserves_manual_selection_and_rejects_st
     image.write_bytes(b'recorded firmware')
     record = {**page.h750_settings(), 'image': str(image), 'sha256': sha256_file(image), 'message': 'success'}
     page.job_finished('compile-h750', True, record)
+    assert page.h750.image.text() == manual and page.h750_modes.currentIndex() == 1
+    assert page.h750_use_artifact.isEnabled()
+    # Cancelling the artifact chooser must also preserve the selected file.
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *args: ('', ''))
+    page.choose_h750_artifact()
+    assert page.h750.image.text() == manual
+    # A saved build record never turns the default manual page into a build prerequisite.
+    restored = FirstSetupPage(state_path=tmp_path / 'state.json')
+    assert restored.h750_modes.currentIndex() == 0 and not restored.h750.image.text()
+    restored.timer.stop()
+    restored.close()
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *args: (str(image), ''))
+    page.choose_h750_artifact()
     assert page.h750.image.text() == str(image) and page.h750.expected_hash == record['sha256']
+    assert page.h750_modes.currentIndex() == 0
     dialog = page.open_firmware('h750')
     pane = dialog.findChild(FirmwarePane)
     assert pane.image.text() == str(image) and pane.expected_hash == record['sha256']
@@ -132,13 +151,39 @@ def test_ui_compile_autofills_firmware_preserves_manual_selection_and_rejects_st
     dialog.close()
     app.processEvents()
     page.h750_build_type.setCurrentText('Debug')
-    assert not page.current_h750_artifact() and not page.h750.image.text()
-    manual = str(tmp_path / 'my existing firmware.bin')
+    assert not page.current_h750_artifact() and page.h750.image.text() == str(image)
     page.h750.image.setText(manual)
     page.compile_h750()
     page.job_finished('compile-h750', False, {'message': 'build failed'})
     assert page.h750.image.text() == manual
     assert '编译未成功' in page.h750_artifact_label.text()
     assert not page.state.get('h750_artifact')
+    page.timer.stop()
+    page.close()
+
+
+def test_direct_local_firmware_flash_requires_no_source_or_compiler(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    page = FirstSetupPage(state_path=tmp_path / 'state.json')
+    page.h750_repo.setText('/no/source/workspace')
+    page.h750_target.setText('invalid compiler settings!')
+    page.resize(1200, 850)
+    page.show()
+    page.tabs.setCurrentIndex(2)
+    QTest.qWait(20)
+    assert page.h750_modes.currentIndex() == 0
+    assert page.h750.image.isVisible() and not page.h750_repo.isVisible()
+    image = tmp_path / 'existing H750.bin'
+    image.write_bytes(b'\x00' * 32)
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *args: (str(image), ''))
+    page.h750.browse()
+    monkeypatch.setattr('ecat_groundstation.first_setup.shutil.which', lambda name: '/usr/bin/' + name)
+    monkeypatch.setattr('ecat_groundstation.first_setup.detect_stlinks', lambda: [{'serial': 'TEST123', 'product': 'ST-LINK'}])
+    monkeypatch.setattr(QMessageBox, 'question', lambda *args: QMessageBox.Yes)
+    calls = []
+    page.start_job = lambda action, args=(): calls.append((action, args)) or True
+    page.h750.execute(True)
+    assert len(calls) == 1 and calls[0][0] == 'flash-mcu'
+    assert str(image) in calls[0][1] and 'h750' in calls[0][1]
     page.timer.stop()
     page.close()

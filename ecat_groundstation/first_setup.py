@@ -414,7 +414,19 @@ class FirstSetupPage(QWidget):
             self.eeprom_image.setText(saved_image)
 
     def build_h750_tab(self):
-        layout = self.tab('3  H750 固件')
+        outer = self.tab('3  H750 固件')
+        self.h750_modes = QTabWidget()
+        outer.addWidget(self.h750_modes)
+        manual = QWidget()
+        manual_layout = QVBoxLayout(manual)
+        manual_layout.addWidget(note('直接选择电脑上已有的 ELF / HEX / BIN 固件，再检测 ST-Link、烧录并校验。此方式不需要源码或编译工具链。'))
+        self.h750 = FirmwarePane(self, 'h750')
+        manual_layout.addWidget(self.h750)
+        manual_layout.addWidget(action_button('打开独立 H750 烧录窗口', lambda: self.open_firmware('h750'), True))
+        self.h750_modes.addTab(manual, '选择本地固件并烧录')
+        compilation = QWidget()
+        layout = QVBoxLayout(compilation)
+        self.h750_modes.addTab(compilation, '本地源码编译（可选）')
         settings = self.state.get('h750_build', {})
         form = QFormLayout()
         self.h750_repo = QLineEdit(settings.get('repo', str(self.state_path.parent / 'firmware/EcatV2_AX58100_H750_Universal')))
@@ -424,7 +436,7 @@ class FirstSetupPage(QWidget):
         self.h750_compiler_bin = QLineEdit(settings.get('toolchain_bin', ''))
         self.h750_compiler_bin.setPlaceholderText('可选：完整 ARM 工具链的 bin 目录；留空使用系统工具链')
         for label, editor, slot in (
-            ('H750 源码目录', self.h750_repo, lambda: self.choose_h750_path(self.h750_repo, '选择 H750 CMake 工程根目录')),
+            ('H750 源码工作空间', self.h750_repo, lambda: self.choose_h750_path(self.h750_repo, '选择包含 CMakeLists.txt 的 H750 源码工程根目录')),
             ('编译输出目录', self.h750_output, lambda: self.choose_h750_path(self.h750_output, '选择编译输出目录')),
             ('ARM 工具链 bin', self.h750_compiler_bin, lambda: self.choose_h750_path(self.h750_compiler_bin, '选择 ARM 工具链 bin 目录')),
             ('CMake 工具链文件', self.h750_toolchain, self.choose_h750_toolchain),
@@ -445,17 +457,18 @@ class FirstSetupPage(QWidget):
         row.addWidget(action_button('编译H750固件', self.compile_h750, True))
         row.addWidget(action_button('安装 H750 编译依赖', lambda: self.start_job('install-tools', ['--tool-set', 'h750'])))
         layout.addLayout(row)
-        layout.addWidget(note('在普通用户的独立源码快照中编译，实时显示日志，生成 ELF / BIN / HEX。编译成功后自动填入下方固件路径。\n'
+        layout.addWidget(note('选择自己的 H750 源码工程，在普通用户的独立快照中编译，生成 ELF / BIN / HEX。编译完成后，请自主选择产物，再进入烧录页。\n'
                               'H750 源码含 C++20；可使用已有完整 ARM 工具链。选择安装 H750 依赖时，Ubuntu 22.04 的 ARM C++ 库下载约 347 MB，IMU 的精简依赖不变。'))
         self.h750_artifact_label = note('尚未编译；也可以直接选择现有固件烧录。')
         layout.addWidget(self.h750_artifact_label)
-        layout.addWidget(action_button('打开独立 H750 烧录窗口', lambda: self.open_firmware('h750'), True))
-        self.h750 = FirmwarePane(self, 'h750')
-        layout.addWidget(self.h750)
+        self.h750_use_artifact = action_button('选择编译产物用于烧录…', self.choose_h750_artifact, True)
+        layout.addWidget(self.h750_use_artifact)
+        layout.addStretch()
         for editor in (self.h750_repo, self.h750_output, self.h750_toolchain, self.h750_compiler_bin, self.h750_target):
             editor.editingFinished.connect(self.persist_h750_settings)
         self.h750_build_type.currentTextChanged.connect(self.persist_h750_settings)
-        self.refresh_h750_artifact(autofill=True)
+        self.refresh_h750_artifact()
+        self.h750_modes.setCurrentIndex(0)
 
     def build_imu_tab(self):
         layout = self.tab('4  IMU 固件与 ID')
@@ -613,7 +626,7 @@ class FirstSetupPage(QWidget):
             self.persist_h750_settings()
         elif action == 'compile-h750':
             self.state['h750_artifact'] = data
-            self.refresh_h750_artifact(autofill=True)
+            self.refresh_h750_artifact()
         if action in ('enable-rt', 'isolate-cpu'):
             if data.get('reboot_required'):
                 self.state['reboot_pending'] = {'action': action, 'boot_id': read_text('/proc/sys/kernel/random/boot_id'),
@@ -803,9 +816,11 @@ class FirstSetupPage(QWidget):
 
     def open_firmware(self, target, image='', expected_hash='', description=''):
         if target == 'h750' and not image:
-            record = self.current_h750_artifact()
-            if record:
-                image, expected_hash = record['image'], record['sha256']
+            # Mirror the user's explicit file selection, never an implicit
+            # build result. This also works with no source workspace at all.
+            image = self.h750.image.text().strip()
+            if image == self.h750.recorded_image:
+                expected_hash = self.h750.expected_hash
         dialog = QDialog(self)
         dialog.setAttribute(Qt.WA_DeleteOnClose)
         dialog.setWindowFlag(Qt.Window, True)
@@ -831,9 +846,6 @@ class FirstSetupPage(QWidget):
     def persist_h750_settings(self, *args):
         self.state['h750_build'] = self.h750_settings()
         self.persist()
-        if not self.current_h750_artifact() and self.h750.recorded_image and self.h750.image.text() == self.h750.recorded_image:
-            self.h750.image.clear()
-            self.h750.expected_hash = self.h750.recorded_image = ''
         self.refresh_h750_artifact()
 
     def choose_h750_path(self, editor, title):
@@ -860,10 +872,8 @@ class FirstSetupPage(QWidget):
             if value:
                 args += ['--' + key.replace('_', '-'), value]
         if self.start_job('compile-h750', args):
-            previous = self.state.pop('h750_artifact', None)
-            if previous and self.h750.image.text() == previous['image']:
-                self.h750.image.clear()
-                self.h750.expected_hash = self.h750.recorded_image = ''
+            self.state.pop('h750_artifact', None)
+            self.h750_use_artifact.setEnabled(False)
             self.persist()
             self.h750_artifact_label.setText('正在编译 H750 固件，进度见下方日志；完成后可手动烧录。')
 
@@ -880,15 +890,31 @@ class FirstSetupPage(QWidget):
             return None
         return record
 
-    def refresh_h750_artifact(self, autofill=False):
+    def refresh_h750_artifact(self):
         record = self.current_h750_artifact()
+        self.h750_use_artifact.setEnabled(record is not None)
         if not record:
             self.h750_artifact_label.setText('尚无当前设置对应的编译产物；可编译源码，或手动选择已有固件。')
             return
-        self.h750_artifact_label.setText('上次编译成功：' + record['image'] + '\n源码修改后请重新编译。')
-        if autofill:
-            self.h750.image.setText(record['image'])
-            self.h750.recorded_image, self.h750.expected_hash = record['image'], record['sha256']
+        self.h750_artifact_label.setText('上次编译成功：' + record['image'] + '\n点击「选择编译产物用于烧录」自主选择 ELF / BIN / HEX；源码修改后请重新编译。')
+
+    def choose_h750_artifact(self):
+        record = self.current_h750_artifact()
+        if not record:
+            return
+        path, _ = QFileDialog.getOpenFileName(self, '选择 H750 编译产物', str(Path(record['image']).parent), '固件 (*.elf *.hex *.bin)')
+        if not path:
+            return
+        try:
+            digest = sha256_file(path)
+            if Path(path).resolve() == Path(record['image']).resolve() and digest != record['sha256']:
+                raise ValueError('编译产物已改变，请重新编译或在烧录页手动选择固件')
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, '固件选择失败', str(exc))
+            return
+        self.h750.image.setText(path)
+        self.h750.recorded_image, self.h750.expected_hash = path, digest
+        self.h750_modes.setCurrentIndex(0)
 
     def choose_imu_repo(self):
         path = QFileDialog.getExistingDirectory(self, '选择 hipnucimu 源码目录', str(Path.home()))
