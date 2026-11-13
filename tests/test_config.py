@@ -75,10 +75,45 @@ def test_resources_and_topics_block_export():
     assert any('话题' in e for e in p.validate())
 
 
-def test_can_id_collision_in_same_task():
+@pytest.mark.parametrize('mode', [1, 2, 3])
+def test_dm_can_and_master_id_may_match_within_one_task(mode):
     p = single(12)
-    p.slaves[0].tasks[0].values['sdowrite_master_id'] = 1
-    assert any('资源冲突' in e for e in p.validate())
+    t = p.slaves[0].tasks[0]
+    t.values.update(sdowrite_can_id=1, sdowrite_master_id=1, sdowrite_can_inst=2, sdowrite_control_type=mode)
+    assert p.validate() == []
+    imported, warnings = Project.import_yaml(p.export_yaml())
+    assert not warnings
+    assert imported.slaves[0].tasks[0].values == t.values
+    assert imported.slaves[0].sdo_length() == 11
+
+
+@pytest.mark.parametrize('shared_field', ['sdowrite_can_id', 'sdowrite_master_id'])
+def test_dm_shared_id_still_conflicts_with_another_task_on_same_can(shared_field):
+    p = single(12)
+    p.slaves[0].tasks[0].values.update(sdowrite_can_id=1, sdowrite_master_id=1)
+    other = Task.create(12, p.slaves[0].sn, 2)
+    other.values.update(sdowrite_can_id=2, sdowrite_master_id=18)
+    other.values[shared_field] = 1
+    p.slaves[0].tasks.append(other)
+    errors = p.validate()
+    assert any('app_2' in e and '与 app_1 资源冲突' in e for e in errors)
+    assert not any('app_1:' in e for e in errors)
+    with pytest.raises(ValueError, match='资源冲突'):
+        p.export_yaml()
+    other.values['sdowrite_can_inst'] = 2
+    assert p.validate() == []
+
+
+def test_dm_shared_id_still_conflicts_with_imu_but_imu_cannot_repeat_packet_ids():
+    p = single(12)
+    p.slaves[0].tasks[0].values.update(sdowrite_can_id=1, sdowrite_master_id=1)
+    imu = Task.create(3, p.slaves[0].sn, 2)
+    p.slaves[0].tasks.append(imu)
+    assert any('app_2' in e and '与 app_1 资源冲突' in e for e in p.validate())
+    imu.values['sdowrite_can_inst'] = 2
+    assert p.validate() == []
+    imu.values['sdowrite_packet2_id'] = 1
+    assert any('与 app_2 资源冲突' in e for e in p.validate())
 
 
 def test_capacity_standard_vs_large():

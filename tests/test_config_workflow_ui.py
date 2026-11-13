@@ -72,6 +72,27 @@ def test_apply_task_replaces_workspace_yaml_and_build_uses_user_job(app, tmp_pat
     app.processEvents()
 
 
+def test_apply_dm_task_with_matching_command_and_feedback_ids(app, tmp_path):
+    project = make_project(tmp_path)
+    w = MainWindow(project)
+    w.first_setup.state_path = tmp_path / 'setup-state.json'
+    w.tree.setCurrentItem(w.tree.topLevelItem(0).child(0))
+    w.field_editors['sdowrite_master_id'][1].setValue(1)
+    can = w.field_editors['sdowrite_can_inst'][1]
+    can.setCurrentIndex(can.findData(2))
+    result = w.apply_task()
+    assert result
+    loaded, warnings = Project.import_yaml(Path(result['config']).read_text())
+    task = loaded.slaves[0].tasks[0]
+    assert not warnings
+    assert task.values['sdowrite_can_id'] == task.values['sdowrite_master_id'] == 1
+    assert task.values['sdowrite_can_inst'] == 2
+    assert not w.project.validate()
+    w.dirty = False
+    w.close()
+    app.processEvents()
+
+
 @pytest.mark.parametrize('build_after', [False, True])
 @pytest.mark.parametrize('authorized', [False, True])
 def test_root_metadata_repair_preserves_edits_and_retries_after_authorization(app, tmp_path, monkeypatch, build_after, authorized):

@@ -210,7 +210,9 @@ def resources(task):
     if t == 2:
         ids = [0x280, 0x141, 0x142, 0x143, 0x144] if v['sdowrite_control_type'] == 8 else [v['sdowrite_can_packet_id']]
     elif t == 12:
-        ids = [v['sdowrite_can_id'], v['sdowrite_master_id']]
+        # A DM motor may use the same CAN identifier for commands and replies.
+        # Claim it once within this task; other tasks must still avoid the ID.
+        ids = list(dict.fromkeys((v['sdowrite_can_id'], v['sdowrite_master_id'])))
     elif t in (5, 15):
         ids = [v['sdowrite_can_packet_id']] + [v[f'sdowrite_motor{i}_can_id'] for i in range(1, 5) if v[f'sdowrite_motor{i}_can_id']]
     elif t == 3:
