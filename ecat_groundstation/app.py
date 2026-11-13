@@ -8,14 +8,14 @@ from pathlib import Path
 import sys
 import time
 
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QEvent
 from PyQt5.QtGui import QColor, QFont
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
     QGridLayout, QStackedWidget, QListWidget, QTreeWidget, QTreeWidgetItem, QSplitter,
     QComboBox, QLineEdit, QFormLayout, QScrollArea, QTableWidget, QTableWidgetItem,
     QHeaderView, QPlainTextEdit, QTabWidget, QFileDialog, QMessageBox, QInputDialog,
-    QAction, QSpinBox, QDoubleSpinBox, QFrame, QAbstractItemView, QProgressBar, QDialog,
+    QAction, QSpinBox, QDoubleSpinBox, QFrame, QAbstractItemView, QProgressBar, QDialog, QSizePolicy, QLayout,
 )
 from .config import Project, Slave, Task, atomic_write, save_project, load_project
 from .schema import SPECS, Field, active_fields, pdo_size, resources, message_types
@@ -33,6 +33,7 @@ QMainWindow { background: #0e151e; }
 QLabel { background: transparent; }
 QLabel#brand { font-size: 20px; font-weight: 700; color: #f1f7fa; }
 QLabel#pageTitle { font-size: 24px; font-weight: 600; padding: 6px 0; }
+QLabel#sectionTitle { font-size: 16px; font-weight: 600; padding: 4px 0; }
 QLabel#muted { color: #8fa5b6; }
 QLabel#notice { color: #63d7c4; background: #17322f; padding: 10px; border-radius: 5px; }
 QLabel#metric { font-size: 28px; font-weight: 600; color: #64ddc4; }
@@ -133,8 +134,10 @@ class MainWindow(QMainWindow):
         self.pending_config_retry = None
         self.log_seen = None
         self.setWindowTitle('Ecat GroundStation · EtherCAT 配置与调试')
-        self.resize(1500, 920)
-        self.setMinimumSize(1080, 700)
+        available = QApplication.primaryScreen().availableGeometry()
+        usable_width, usable_height = max(640, available.width() - 24), max(400, available.height() - 64)
+        self.resize(min(1500, usable_width), min(920, usable_height))
+        self.setMinimumSize(min(900, usable_width), min(560, usable_height))
         self.build_ui()
         self.refresh()
         self.timer = QTimer(self)
@@ -191,6 +194,9 @@ class MainWindow(QMainWindow):
         self.nav.setFixedWidth(175)
         self.nav.setCurrentRow(0)
         self.pages = QStackedWidget()
+        # Hidden pages must not force the window beyond a smaller screen.
+        self.pages.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        self.header_tagline = tagline
         self.nav.currentRowChanged.connect(self.pages.setCurrentIndex)
         body.addWidget(self.nav)
         body.addWidget(self.pages, 1)
@@ -207,7 +213,7 @@ class MainWindow(QMainWindow):
         self.build_output()
         self.statusBar().showMessage('离线编辑 · 配置尚未应用至硬件')
 
-    def page(self, title, subtitle):
+    def page(self, title, subtitle, scrollable=False):
         w = QWidget()
         l = QVBoxLayout(w)
         l.setContentsMargins(24, 18, 24, 20)
@@ -219,7 +225,15 @@ class MainWindow(QMainWindow):
         sub.setWordWrap(True)
         l.addWidget(sub)
         l.addSpacing(10)
-        self.pages.addWidget(w)
+        if scrollable:
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.NoFrame)
+            scroll.setWidget(w)
+            self.pages.addWidget(scroll)
+            l.setSizeConstraint(QLayout.SetNoConstraint)
+        else:
+            self.pages.addWidget(w)
         return l
 
     def build_overview(self):
@@ -259,7 +273,11 @@ class MainWindow(QMainWindow):
         l.addLayout(actions)
 
     def build_config(self):
-        l = self.page('从站与任务', '为每块 H750 独立配置任务、端口、控制模式与话题。SDO 长度和 PDO 偏移自动生成。')
+        l = self.page('从站与任务', '为每块 H750 独立配置任务、端口、控制模式与话题。SDO 长度和 PDO 偏移自动生成。', scrollable=True)
+        self.config_page_layout = l
+        self.config_page_scroll = self.pages.widget(self.PAGE_CONFIG)
+        self.config_page_content = l.parentWidget()
+        self.config_layout_pending = False
         self.config_toolbar = QWidget()
         toolbar = QHBoxLayout(self.config_toolbar)
         toolbar.setContentsMargins(0, 0, 0, 0)
@@ -285,19 +303,33 @@ class MainWindow(QMainWindow):
         binding.addWidget(self.choose_config_workspace_btn)
         l.addLayout(binding)
         self.config_split = QSplitter()
+        self.config_split.setChildrenCollapsible(False)
+        self.config_split.setHandleWidth(8)
+        self.config_split.setMinimumHeight(420)
+        self.config_split.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
         self.tree = QTreeWidget()
         self.tree.setHeaderLabel('项目设备')
+        self.tree.setMinimumWidth(170)
         self.tree.currentItemChanged.connect(self.tree_selected)
         self.config_split.addWidget(self.tree)
         middle = QWidget()
         ml = QVBoxLayout(middle)
+        ml.setContentsMargins(12, 10, 12, 10)
+        ml.setSpacing(10)
+        ml.setSizeConstraint(QLayout.SetMinimumSize)
         self.slave_title = QLabel('从站设置')
+        self.slave_title.setObjectName('sectionTitle')
+        self.slave_title.setWordWrap(True)
         ml.addWidget(self.slave_title)
         form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         self.sn_edit = QLineEdit()
         self.model_edit = QComboBox()
         self.model_edit.addItem('H750 标准版 · 80 / 80 B', 'standard')
         self.model_edit.addItem('H750 Large PDO · 112 / 80 B', 'large')
+        self.model_edit.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.model_edit.setMinimumContentsLength(16)
         self.latency_edit = QLineEdit()
         form.addRow('模块 SN', self.sn_edit)
         form.addRow('硬件型号', self.model_edit)
@@ -306,15 +338,19 @@ class MainWindow(QMainWindow):
         ml.addWidget(button('应用从站设置', self.apply_slave))
         self.budget = QLabel()
         self.budget.setObjectName('notice')
+        self.budget.setWordWrap(True)
         ml.addWidget(self.budget)
         add_row = QHBoxLayout()
         self.task_type = QComboBox()
+        self.task_type.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.task_type.setMinimumContentsLength(12)
         for spec in SPECS.values():
             self.task_type.addItem(f'{spec.id:02d} · {spec.name}', spec.id)
         add_row.addWidget(self.task_type, 1)
         add_row.addWidget(button('+ 任务', self.add_task, 'primary'))
         ml.addLayout(add_row)
         self.task_table = table(['#', '任务', '反馈 B', '命令 B'])
+        self.task_table.setMinimumHeight(160)
         self.task_table.itemSelectionChanged.connect(self.table_selected)
         ml.addWidget(self.task_table, 1)
         row = QHBoxLayout()
@@ -322,9 +358,17 @@ class MainWindow(QMainWindow):
         row.addWidget(button('下移', lambda: self.move_task(1)))
         row.addWidget(button('删除任务', self.remove_task))
         ml.addLayout(row)
-        self.config_split.addWidget(middle)
+        self.slave_scroll = QScrollArea()
+        self.slave_scroll.setWidgetResizable(True)
+        self.slave_scroll.setFrameShape(QFrame.NoFrame)
+        self.slave_scroll.setMinimumWidth(330)
+        self.slave_scroll.setWidget(middle)
+        self.config_split.addWidget(self.slave_scroll)
         right = QWidget()
+        right.setMinimumWidth(360)
         rl = QVBoxLayout(right)
+        rl.setContentsMargins(12, 10, 12, 10)
+        rl.setSizeConstraint(QLayout.SetMinimumSize)
         self.task_editor_title = QLabel('选择一个任务以编辑')
         self.task_editor_title.setObjectName('brand')
         self.task_editor_title.setWordWrap(True)
@@ -335,11 +379,16 @@ class MainWindow(QMainWindow):
         rl.addWidget(self.task_note)
         self.form_scroll = QScrollArea()
         self.form_scroll.setWidgetResizable(True)
+        self.form_scroll.setMinimumHeight(150)
         rl.addWidget(self.form_scroll, 1)
         rl.addWidget(button('应用任务修改', self.apply_task, 'primary'))
         self.config_build_btn = button('colcon build（普通用户）', self.build_task_workspace)
         rl.addWidget(self.config_build_btn)
         self.config_split.addWidget(right)
+        self.task_panel = right
+        self.config_tabs = QTabWidget(self.config_split.parentWidget())
+        self.config_tabs.hide()
+        self.compact_config = None
         self.config_split.setSizes([220, 470, 420])
         l.addWidget(self.config_split, 1)
         self.config_apply_status = QLabel('尚未应用。先配置任务，再应用到当前工作空间。')
@@ -354,7 +403,7 @@ class MainWindow(QMainWindow):
         build_status_row.addWidget(self.config_build_progress, 1)
         self.config_cancel_btn = button('取消编译', self.first_setup.jobs.cancel)
         self.config_cancel_btn.setEnabled(False)
-        build_status_row.addWidget(self.config_cancel_btn)
+        build_status_row.addWidget(self.config_cancel_btn, 0, Qt.AlignRight)
         l.addLayout(build_status_row)
         self.config_build_log = QPlainTextEdit()
         self.config_build_log.setReadOnly(True)
@@ -362,6 +411,79 @@ class MainWindow(QMainWindow):
         self.config_build_log.setMaximumHeight(130)
         self.config_build_log.hide()
         l.addWidget(self.config_build_log)
+        self.config_layout_watchers = (self.config_split, self.config_page_scroll.viewport(), self.config_page_content)
+        for watched in self.config_layout_watchers:
+            watched.installEventFilter(self)
+        self.update_config_layout()
+
+    def eventFilter(self, watched, event):
+        if event.type() in (QEvent.Resize, QEvent.LayoutRequest) and watched in getattr(self, 'config_layout_watchers', ()):
+            if not self.config_layout_pending:
+                self.config_layout_pending = True
+                QTimer.singleShot(0, self.update_config_layout)
+        return super().eventFilter(watched, event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'header_tagline'):
+            self.header_tagline.setVisible(self.width() >= 1200)
+            self.nav.setFixedWidth(150 if self.width() < 1200 else 175)
+
+    def update_config_layout(self):
+        self.config_layout_pending = False
+        # Avoid switching back and forth when a scroll bar changes width near
+        # the breakpoint while the user drags the window edge.
+        compact = self.config_split.width() < (1040 if self.compact_config else 1000)
+        changed = compact != self.compact_config
+        self.compact_config = compact
+        if changed and compact:
+            self.config_tabs.addTab(self.slave_scroll, '从站与任务列表')
+            self.config_tabs.addTab(self.task_panel, '任务参数')
+            self.config_split.addWidget(self.config_tabs)
+            self.config_tabs.show()
+            self.config_tabs.setCurrentIndex(1 if self.selection[1] >= 0 else 0)
+            self.config_split.setSizes([180, 650])
+        elif changed:
+            while self.config_tabs.count():
+                self.config_tabs.removeTab(0)
+            self.config_tabs.hide()
+            self.config_tabs.setParent(self.config_split.parentWidget())
+            self.config_split.addWidget(self.slave_scroll)
+            self.config_split.addWidget(self.task_panel)
+            self.slave_scroll.show()
+            self.task_panel.show()
+            self.config_split.setSizes([200, 390, 470])
+        # QScrollArea otherwise promotes a splitter child's full sizeHint to
+        # page height, even when the child has its own scroll bar. Fit the
+        # viewport explicitly, retaining a usable editor height on small screens.
+        layout = self.config_page_layout
+        margins = layout.contentsMargins()
+        pane_width = 360 if compact else 330 + 360 + self.config_split.handleWidth()
+        minimum_width = max(layout.minimumSize().width(), 170 + pane_width + self.config_split.handleWidth() + margins.left() + margins.right())
+        width = max(1, max(minimum_width, self.config_page_scroll.viewport().width()) - margins.left() - margins.right())
+        chrome = margins.top() + margins.bottom()
+        visible = 0
+        for index in range(layout.count()):
+            item = layout.itemAt(index)
+            widget = item.widget()
+            if widget is not None and widget.isHidden():
+                continue
+            visible += 1
+            if widget is self.config_split:
+                continue
+            if widget is not None:
+                height = widget.heightForWidth(width) if widget.hasHeightForWidth() else widget.sizeHint().height()
+                chrome += max(widget.minimumHeight(), min(widget.maximumHeight(), max(0, height)))
+            else:
+                chrome += max(0, item.sizeHint().height())
+        chrome += max(0, visible - 1) * layout.spacing()
+        height = max(420, self.config_page_scroll.viewport().height() - chrome)
+        if self.config_split.minimumHeight() != height or self.config_split.maximumHeight() != height:
+            self.config_split.setFixedHeight(height)
+        if self.config_page_content.minimumWidth() != minimum_width or self.config_page_content.minimumHeight() != chrome + height:
+            self.config_page_content.setMinimumSize(minimum_width, chrome + height)
+        if self.config_page_content.maximumHeight() != chrome + height:
+            self.config_page_content.setMaximumHeight(chrome + height)
 
     def build_control(self):
         l = self.page('执行器与传感器调试', '双击任务打开独立窗口，可分别查看反馈、编辑目标值、绘制曲线并导出 CSV。')
@@ -506,6 +628,8 @@ class MainWindow(QMainWindow):
             self.pending_task = copy.deepcopy(s.tasks[ti])
         self.task_table.blockSignals(False)
         self.render_task_editor()
+        if self.compact_config:
+            self.config_tabs.setCurrentIndex(1 if ti >= 0 else 0)
 
     def tree_selected(self, current, previous):
         if current:
@@ -524,6 +648,7 @@ class MainWindow(QMainWindow):
         container = QWidget()
         form = QFormLayout(container)
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         if self.pending_task:
             task = self.pending_task
             self.task_editor_title.setText(SPECS[task.type_id].name)
@@ -537,6 +662,8 @@ class MainWindow(QMainWindow):
                 value = task.values.get(f.key, f.default)
                 if f.choices:
                     editor = QComboBox()
+                    editor.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+                    editor.setMinimumContentsLength(10)
                     for val, text in f.choices:
                         editor.addItem(text, val)
                     editor.setCurrentIndex(editor.findData(value))
@@ -552,7 +679,9 @@ class MainWindow(QMainWindow):
                     editor.setSingleStep(.1 if f.tag == 'float' else 1)
                 editor.setToolTip(f'{f.key}: !{f.tag}')
                 self.field_editors[f.key] = (f, editor)
-                form.addRow(f.label, editor)
+                label = QLabel(f.label)
+                label.setWordWrap(True)
+                form.addRow(label, editor)
                 if 'control_type' in f.key or (task.type_id in (5, 15) and f.key.startswith('sdowrite_motor') and f.key.endswith('can_id')):
                     mode_editors.append(editor)
             for editor in mode_editors:
@@ -1143,6 +1272,8 @@ def main(argv=None):
     parser.add_argument('--screenshot', help='离屏 UI 截图路径（不连接 ROS、不发送命令）')
     parser.add_argument('--first-setup', action='store_true', help='打开首次配置模块（不自动执行系统修改或烧录）')
     args = parser.parse_args(argv)
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app = QApplication([sys.argv[0]])
     app.setApplicationName('Ecat GroundStation')
     app.setOrganizationName('EcatGroundStation')

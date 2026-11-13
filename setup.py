@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='ecat_groundstation',
-    version='0.4.7',
+    version='0.4.8',
     packages=['ecat_groundstation'],
     package_data={'ecat_groundstation': ['message_fields.json', 'eeprom_native.c', 'h750_runtime_sources.json', 'fastdds_udp.xml', 'output_enabled.svg']},
     description='AIM EtherCAT desktop configuration and ROS 2 commissioning station',

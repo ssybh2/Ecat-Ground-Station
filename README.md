@@ -78,4 +78,19 @@ source ~/Ecat-Ground-Station/install/setup.bash
 ros2 run ecat_groundstation ecat-groundstation
 ```
 
+### 3. 更新本地 EGC
+
+关闭旧版 EGC，在新终端执行（自定义安装位置时替换工作空间路径）：
+
+```bash
+cd ~/Ecat-Ground-Station/src/ecat_groundstation
+git pull --ff-only
+
+cd ~/Ecat-Ground-Station
+source /opt/ros/humble/setup.bash
+colcon build --packages-up-to ecat_groundstation
+source install/setup.bash
+ros2 run ecat_groundstation ecat-groundstation
+```
+
 [LGPL-2.1-or-later](LICENSE) · [第三方声明](THIRD_PARTY_NOTICES.md)
