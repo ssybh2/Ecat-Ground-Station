@@ -14,9 +14,40 @@ Releases界面提供80B以及112B 两款常用的H750固件stable版本
 
 ## 部署
 
-需已安装 ROS 2 Humble。打开未加载其他工作空间的新终端，以普通用户在桌面环境中执行：
+适用于全新的 Ubuntu 22.04 桌面系统。以普通用户打开终端，依次执行；已有 Humble 可跳过第一步。
 
-源码、编译产物和构建日志统一存放在 home 下的 `~/Ecat-Ground-Station/` 专用文件夹中。
+### 1. 安装 ROS 2 Humble
+
+按 [ROS 2 官方安装说明](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debs.html) 配置，安装满足本软件需求的基础版。
+
+```bash
+# UTF-8 环境与 Ubuntu Universe 软件源
+sudo apt update
+sudo apt install -y locales software-properties-common curl ca-certificates
+sudo locale-gen en_US en_US.UTF-8
+sudo update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
+sudo add-apt-repository -y universe
+
+# 官方 ROS 软件源及签名密钥（Ubuntu 22.04 / Jammy）
+curl -fL --retry 3 -o /tmp/ros2-apt-source.deb \
+  https://github.com/ros-infrastructure/ros-apt-source/releases/download/1.3.0/ros2-apt-source_1.3.0.jammy_all.deb
+sudo dpkg -i /tmp/ros2-apt-source.deb
+
+# 全新系统先完成更新，再安装 Humble
+sudo apt update
+sudo apt upgrade -y
+sudo apt install -y --no-install-recommends ros-humble-ros-base
+source /opt/ros/humble/setup.bash
+ros2 --help
+```
+
+若系统更新提示需要重启，请重启后再执行第二步。
+
+### 2. 编译并启动软件
+
+打开未加载其他工作空间的新终端。源码、编译产物和构建日志统一存放在 `~/Ecat-Ground-Station/` 专用文件夹中。
 
 ```bash
 sudo apt update
