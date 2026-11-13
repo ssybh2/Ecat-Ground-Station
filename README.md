@@ -2,7 +2,12 @@
 
 Ubuntu 22.04 · ROS 2 Humble · Python 3.10
 
-覆盖从零配置 EtherCAT 的完整流程：CPU 核心隔离、实时内核启用、工作空间创建、H750 与 IMU 固件编译烧录、从站任务配置，以及执行器调试。
+覆盖从零配置 EtherCAT 的完整流程：<br>
+CPU 核心隔离、实时内核启用、工作空间创建、H750 与 IMU 固件编译烧录、从站任务配置，以及执行器调试。<br>
+已验证的**常见**传感器、执行器：<br>
+**超核IMU**<br>
+**Dshot600,PWM信号**<br>
+**DM电机**
 
 ![Ecat GroundStation 演示](artifacts/demo.gif)
 
