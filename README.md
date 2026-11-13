@@ -8,7 +8,8 @@ CPU 核心隔离、实时内核启用、工作空间创建、H750 与 IMU 固件
 **超核IMU**<br>
 **Dshot600,PWM信号**<br>
 **DM电机**
-
+## Releases
+Releases界面提供80B以及112B 两款常用的H750固件stable版本
 ![Ecat GroundStation 演示](artifacts/demo.gif)
 
 ## 部署
